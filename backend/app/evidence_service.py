@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from html.parser import HTMLParser
 import ipaddress
+import os
 import socket
 import subprocess
 import sys
@@ -18,7 +19,7 @@ from app.models import CaseAsset, WebEvidenceSnapshot
 from app.storage import save_case_asset, save_web_snapshot
 
 
-DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
+DATA_ROOT = Path(os.getenv("SMARTPOLICE_DATA_ROOT", str(Path(__file__).resolve().parents[1] / "data")))
 UPLOAD_ROOT = DATA_ROOT / "uploads"
 SNAPSHOT_ROOT = DATA_ROOT / "snapshots"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024

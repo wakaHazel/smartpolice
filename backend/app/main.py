@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -160,17 +163,32 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        *[origin.strip() for origin in os.getenv("SMARTPOLICE_CORS_ORIGINS", "").split(",") if origin.strip()],
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.mount("/evidence/files", StaticFiles(directory=str(DATA_ROOT)), name="evidence-files")
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="frontend-assets")
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+def frontend_index() -> FileResponse:
+    index_path = FRONTEND_DIST / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend build not found.")
+    return FileResponse(index_path)
 
 
 @app.get("/cases", response_model=list[CaseSample])
@@ -685,3 +703,13 @@ def _case_or_404(case_id: str) -> CaseSample:
         return load_case_sample(case_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Case not found: {case_id}") from exc
+
+
+@app.get("/{path:path}", include_in_schema=False)
+def frontend_fallback(path: str) -> FileResponse:
+    if path.startswith(("api/", "cases/", "analysis/", "training/", "agent/", "models/", "evidence/")):
+        raise HTTPException(status_code=404, detail="Not found")
+    index_path = FRONTEND_DIST / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend build not found.")
+    return FileResponse(index_path)
