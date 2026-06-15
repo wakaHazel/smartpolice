@@ -645,10 +645,11 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
     asset.candidate_ranking?.length ? asset.candidate_ranking : asset.candidate_distribution,
   );
   const groupedSources = groupedSourceDistribution(allCandidates);
-  const groupedRows = groupedSourceRows(groupedSources);
-  const generatedSignal = Math.round(groupedSources.aiTotal * 100);
-  const realSignal = Math.round(groupedSources.real * 100);
-  const verdictTitle = groupedSources.aiTotal >= groupedSources.real ? "AI生成图" : "真实照片";
+  const displaySources = normalizeVisibleSourceDistribution(groupedSources);
+  const groupedRows = groupedSourceRows(displaySources);
+  const generatedSignal = Math.round(displaySources.aiTotal * 100);
+  const realSignal = Math.round(displaySources.real * 100);
+  const verdictTitle = displaySources.aiTotal >= displaySources.real ? "AI生成图" : "真实照片";
   const nextSteps = compactForensicsNextSteps(generatedSignal);
   return (
     <div className="forensics-board">
@@ -1086,6 +1087,23 @@ function groupedSourceDistribution(candidates: CandidateDistributionEntry[]): Gr
   return {
     ...grouped,
     aiTotal,
+  };
+}
+
+function normalizeVisibleSourceDistribution(grouped: GroupedSourceDistribution): GroupedSourceDistribution {
+  const visibleTotal = grouped.gptImage2 + grouped.otherAi + grouped.real;
+  if (visibleTotal <= 0) {
+    return grouped;
+  }
+  const gptImage2 = grouped.gptImage2 / visibleTotal;
+  const otherAi = grouped.otherAi / visibleTotal;
+  const real = grouped.real / visibleTotal;
+  return {
+    gptImage2,
+    otherAi,
+    real,
+    unknown: 0,
+    aiTotal: Math.max(0, Math.min(1, gptImage2 + otherAi)),
   };
 }
 
