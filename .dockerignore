@@ -10,6 +10,8 @@
 
 backend/.env
 backend/data
+!backend/demo_model_seed
+!backend/demo_model_seed/**
 backend/logs
 
 frontend/node_modules

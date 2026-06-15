@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "backend") not in sys.path:
     sys.path.insert(0, str(ROOT / "backend"))
 
-from app.evidence_service import public_asset_path
+from app.evidence_service import UPLOAD_ROOT, public_asset_path
 from app.models import CaseAsset, CaseSample, SpreadMetrics
 from app.storage import (
     DB_PATH,
@@ -137,7 +137,7 @@ def _copy_demo_images() -> list[tuple[str, Path, str, str]]:
     for case_id, source, filename, content_type in specs:
         if not source.exists():
             raise FileNotFoundError(f"Missing demo source image: {source}")
-        out_dir = DB_PATH.parent / "uploads" / case_id
+        out_dir = UPLOAD_ROOT / case_id
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / filename
         with Image.open(source) as image:

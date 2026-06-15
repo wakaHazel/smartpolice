@@ -172,6 +172,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
 app.mount("/evidence/files", StaticFiles(directory=str(DATA_ROOT)), name="evidence-files")
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if FRONTEND_DIST.exists():
