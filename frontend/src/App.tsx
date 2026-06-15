@@ -669,11 +669,11 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
       </div>
       <div className="candidate-summary-list candidate-summary-list-three" aria-label="来源类别分布">
         {groupedRows.map((item) => (
-            <div className="candidate-summary-item" key={item.label}>
-              <span>{item.label}</span>
-              <strong>{item.name}</strong>
-              <b>{Math.round(item.confidence * 100)}%</b>
-            </div>
+          <div className="candidate-summary-item" key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.name}</strong>
+            <b>{Math.round(item.confidence * 100)}%</b>
+          </div>
         ))}
       </div>
       <div className="next-step-list">
