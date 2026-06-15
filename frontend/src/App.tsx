@@ -145,18 +145,26 @@ export function App() {
     async (caseId: string) => {
       setIsBusy(true);
       setError("");
+      const locallyCachedRealAnalysis = readCachedRealAnalysis(caseId);
+      setRealAnalysis(locallyCachedRealAnalysis);
       try {
-      const [result, bundle, cachedForensics] = await Promise.all([
-        runFullAnalysis(caseId),
-        fetchCaseEvidence(caseId),
-        fetchImageForensics(caseId).catch(() => null),
-      ]);
-      const cachedRealAnalysis = await fetchRealAnalysis(caseId).catch(() => null);
-      setAnalysis(result);
-      setEvidenceBundle(bundle);
-      setRealAnalysis(cachedRealAnalysis);
-      setImageForensics(cachedForensics);
-      setSourceUrlInput(result.case.source_url.startsWith("http") ? result.case.source_url : "");
+        const [result, bundle, cachedForensics, cachedRealAnalysis] = await Promise.all([
+          runFullAnalysis(caseId),
+          fetchCaseEvidence(caseId),
+          fetchImageForensics(caseId).catch(() => null),
+          fetchRealAnalysis(caseId).catch(() => null),
+        ]);
+        setAnalysis(result);
+        setEvidenceBundle(bundle);
+        if (cachedRealAnalysis) {
+          writeCachedRealAnalysis(cachedRealAnalysis);
+          setRealAnalysis(cachedRealAnalysis);
+        } else {
+          clearCachedRealAnalysis(caseId);
+          setRealAnalysis(null);
+        }
+        setImageForensics(cachedForensics);
+        setSourceUrlInput(result.case.source_url.startsWith("http") ? result.case.source_url : "");
       } catch (err) {
         setError(err instanceof Error ? err.message : "研判失败");
       } finally {
@@ -273,6 +281,7 @@ export function App() {
       setMessage(`图片已上传并固定：${asset.sha256.slice(0, 12)}`);
       setImageForensics(null);
       setRealAnalysis(null);
+      clearCachedRealAnalysis(selectedCase.id);
       await refreshEvidence(selectedCase.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "图片上传失败");
@@ -317,6 +326,7 @@ export function App() {
       const snapshot = await captureCaseSource(selectedCase.id, sourceUrlInput);
       setMessage(`来源页面已留证：${snapshot.sha256.slice(0, 12)}`);
       setRealAnalysis(null);
+      clearCachedRealAnalysis(selectedCase.id);
       await refreshEvidence(selectedCase.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "URL 取证失败");
@@ -339,6 +349,7 @@ export function App() {
     setMessage("");
     try {
       const result = await runRealAnalysis(selectedCase.id);
+      writeCachedRealAnalysis(result);
       setRealAnalysis(result);
       setActiveTab("report");
       setMessage("证据链报告已生成");
@@ -1200,6 +1211,38 @@ function assetUrl(value: string): string {
     return `${apiBase}${value}`;
   }
   return value;
+}
+
+const REAL_ANALYSIS_CACHE_PREFIX = "smartpolice.realAnalysis.";
+
+function readCachedRealAnalysis(caseId: string): RealCaseAnalysisResult | null {
+  try {
+    const raw = window.localStorage.getItem(`${REAL_ANALYSIS_CACHE_PREFIX}${caseId}`);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as RealCaseAnalysisResult;
+    return parsed?.case?.id === caseId && parsed.report_markdown ? parsed : null;
+  } catch {
+    clearCachedRealAnalysis(caseId);
+    return null;
+  }
+}
+
+function writeCachedRealAnalysis(result: RealCaseAnalysisResult): void {
+  try {
+    window.localStorage.setItem(`${REAL_ANALYSIS_CACHE_PREFIX}${result.case.id}`, JSON.stringify(result));
+  } catch {
+    // Browser storage is only a UI convenience; the backend remains the source of truth.
+  }
+}
+
+function clearCachedRealAnalysis(caseId: string): void {
+  try {
+    window.localStorage.removeItem(`${REAL_ANALYSIS_CACHE_PREFIX}${caseId}`);
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 function candidateDistributionEntries(value: unknown): CandidateDistributionEntry[] {
