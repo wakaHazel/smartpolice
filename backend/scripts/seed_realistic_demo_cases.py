@@ -26,6 +26,7 @@ from app.storage import (
 DEMO_ASSET_DIR = ROOT / "backend" / "demo_assets"
 NANO_BANANA_COLLAPSE_CASE_ID = "demo-doubao-collapse-disaster-001"
 GPT_STATION_CONFLICT_CASE_ID = "demo-gptimage-station-police-conflict-001"
+REAL_BEIJING_ROAD_CASE_ID = "demo-real-beijing-road-street-001"
 
 NANO_BANANA_COLLAPSE_CASE = CaseSample(
     id=NANO_BANANA_COLLAPSE_CASE_ID,
@@ -85,9 +86,43 @@ GPT_STATION_CONFLICT_CASE = CaseSample(
     sensitivity_notes="涉警执法冲突类画面容易损害公安机关公信力并激化线下围观，应优先固定原图和传播链。",
     review_note="演示视频涉警高敏感案例：使用用户提供的 GPT-image 原始清晰图，展示报告生成链路。",
 )
+REAL_BEIJING_ROAD_CASE = CaseSample(
+    id=REAL_BEIJING_ROAD_CASE_ID,
+    title="公开来源真实街面照片核验",
+    scenario="公共场所秩序信息核查",
+    platform="Wikimedia Commons / 演示导入",
+    publish_time="2025-02-22",
+    source_url=(
+        "https://commons.wikimedia.org/wiki/File:20250222_Site_of_the_Ancient_Street_at_Beijing_Road_01.jpg"
+    ),
+    content=(
+        "网传广州北京路古道遗址街面照片，画面显示城市道路中的玻璃保护区、护栏和周边公共空间。"
+        "核查重点是确认该图是否为公开来源真实街面照片。"
+    ),
+    image_description=(
+        "待检图片为 1800x1200 的 JPEG 实拍照片：街面玻璃保护区下方可见古道遗址，周边有路面、"
+        "护栏和城市公共空间元素。"
+    ),
+    spread=SpreadMetrics(
+        views=8200,
+        reposts=120,
+        comments=65,
+        likes=430,
+        velocity="演示设定：低速传播，主要用于核验公开来源真实照片",
+    ),
+    manual_label="公开来源真实照片，用于演示真实照片核验",
+    manual_risk_score=18,
+    tags=["真实照片", "Wikimedia Commons", "公共街面", "CC BY-SA 4.0"],
+    sensitivity_notes="公开街面实拍图，未设置灾情、涉警冲突等高敏感叙事；演示重点是来源可追溯和真实照片识别。",
+    review_note=(
+        "真实照片对照案例：来源 Wikimedia Commons；文件 20250222 Site of the Ancient Street at Beijing Road 01.jpg；"
+        "作者 Windmemories；许可 CC BY-SA 4.0。"
+    ),
+)
 DEMO_CASES = [
     NANO_BANANA_COLLAPSE_CASE,
     GPT_STATION_CONFLICT_CASE,
+    REAL_BEIJING_ROAD_CASE,
 ]
 REJECTED_DEMO_IDS = [
     "demo-video-001-police-station",
@@ -125,27 +160,39 @@ def _copy_demo_images() -> list[tuple[str, Path, str, str]]:
             DEMO_ASSET_DIR / "nano-banana-tunnel-collapse-social.png",
             "nano-banana-tunnel-collapse-social.png",
             "image/png",
+            False,
         ),
         (
             GPT_STATION_CONFLICT_CASE_ID,
             DEMO_ASSET_DIR / "gptimage-station-police-conflict-original.jpg",
             "gptimage-station-police-conflict-original.jpg",
             "image/jpeg",
+            False,
+        ),
+        (
+            REAL_BEIJING_ROAD_CASE_ID,
+            DEMO_ASSET_DIR / "real-beijing-road-ancient-street.jpg",
+            "real-beijing-road-ancient-street.jpg",
+            "image/jpeg",
+            True,
         ),
     ]
     copied: list[tuple[str, Path, str, str]] = []
-    for case_id, source, filename, content_type in specs:
+    for case_id, source, filename, content_type, preserve_original in specs:
         if not source.exists():
             raise FileNotFoundError(f"Missing demo source image: {source}")
         out_dir = UPLOAD_ROOT / case_id
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / filename
-        with Image.open(source) as image:
-            normalized = image.convert("RGB")
-            if content_type == "image/jpeg":
-                normalized.save(target, "JPEG", quality=96, optimize=True)
-            else:
-                normalized.save(target, "PNG", optimize=True)
+        if preserve_original:
+            target.write_bytes(source.read_bytes())
+        else:
+            with Image.open(source) as image:
+                normalized = image.convert("RGB")
+                if content_type == "image/jpeg":
+                    normalized.save(target, "JPEG", quality=96, optimize=True)
+                else:
+                    normalized.save(target, "PNG", optimize=True)
         copied.append((case_id, target, filename, content_type))
     return copied
 
