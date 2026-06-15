@@ -38,6 +38,7 @@ def main() -> None:
             is_active = int(run.get("is_active") or 0)
             if not run_id or not created_at or not isinstance(run_payload, dict) or not isinstance(artifact, dict):
                 continue
+            artifact = _resolve_packaged_artifact_paths(artifact)
             if is_active:
                 if table == "vision_training_runs":
                     task_type = str(run_payload.get("task_type") or artifact.get("task_type") or "")
@@ -79,6 +80,43 @@ def main() -> None:
                 )
         connection.commit()
     print(f"Seeded demo model runs into {DB_PATH}")
+
+
+def _resolve_packaged_artifact_paths(artifact: dict[str, object]) -> dict[str, object]:
+    resolved = dict(artifact)
+    for key in ("classifier_path", "binary_gate_path", "gpt_image2_detector_path"):
+        value = resolved.get(key)
+        if isinstance(value, str) and value:
+            resolved_path = _resolve_seed_path(value)
+            if resolved_path is not None:
+                resolved[key] = str(resolved_path)
+                metadata_key = {
+                    "classifier_path": "classifier_metadata",
+                    "binary_gate_path": "binary_gate_metadata",
+                    "gpt_image2_detector_path": "gpt_image2_detector_metadata",
+                }[key]
+                metadata = resolved.get(metadata_key)
+                if isinstance(metadata, dict):
+                    metadata = dict(metadata)
+                    metadata["artifact_path"] = str(resolved_path)
+                    resolved[metadata_key] = metadata
+    return resolved
+
+
+def _resolve_seed_path(value: str) -> Path | None:
+    path = Path(value)
+    if path.is_absolute():
+        return path if path.exists() else None
+    candidates = [
+        ROOT / path,
+        ROOT / "backend" / path,
+        SEED_PATH.parent / path.name,
+        SEED_PATH.parent / "model_artifacts" / path.name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
 
 
 if __name__ == "__main__":
