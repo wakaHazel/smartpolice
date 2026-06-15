@@ -2328,6 +2328,78 @@ def test_image_forensics_cache_is_cleared_after_new_upload() -> None:
     assert client.get(f"/cases/{case_id}/image-forensics").status_code == 404
 
 
+def test_image_forensics_prefers_trained_model_over_demo_prior(monkeypatch: Any) -> None:
+    case_id = "pytest-gpt-image-demo-prior-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "GPT-image 车站图片真实模型覆盖测试",
+            "scenario": "涉警公信力谣言",
+            "platform": "本地测试",
+            "publish_time": "2026-06-15 09:30",
+            "source_url": "本地测试",
+            "content": "文件名和文字故意命中 GPT-image 演示样本关键词，但本地必须采用真实模型输出。",
+            "image_description": "测试图片",
+            "spread": {
+                "views": 1000,
+                "reposts": 20,
+                "comments": 30,
+                "likes": 40,
+                "velocity": "低速传播",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": 50,
+            "tags": ["gpt-image", "真实模型"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("gptimage-station-police-conflict.png", _png_1x1(), "image/png")},
+    )
+    assert upload.status_code == 200
+    asset_id = upload.json()["id"]
+
+    def trained_prediction(_: list[Any], case_text: str = "") -> dict[str, object]:
+        assert "GPT-image" in case_text
+        return {
+            "vision_generator_attribution": {
+                "trained": True,
+                "enabled": True,
+                "model_id": "pytest-real-model",
+                "model_kind": "local-generator-attribution-extratrees-v2",
+                "asset_predictions": [
+                    {
+                        "asset_id": asset_id,
+                        "top_candidate": "real",
+                        "confidence": 0.91,
+                        "candidate_ranking": [
+                            {"rank": 1, "label": "real", "probability": 0.91, "confidence": 0.91},
+                            {"rank": 2, "label": "other-generated", "probability": 0.06, "confidence": 0.06},
+                            {"rank": 3, "label": "gpt-image2", "probability": 0.03, "confidence": 0.03},
+                        ],
+                    }
+                ],
+            }
+        }
+
+    monkeypatch.delenv("SMARTPOLICE_ENABLE_DEMO_FORENSICS_FALLBACK", raising=False)
+    monkeypatch.setattr("app.image_forensics.predict_vision_for_assets", trained_prediction)
+
+    response = client.post(f"/cases/{case_id}/image-forensics")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model_id"] == "pytest-real-model"
+    assert body["asset_results"][0]["top_candidate"] == "real"
+    assert body["asset_results"][0]["confidence"] == 0.91
+    assert body["asset_results"][0]["candidate_ranking"][0]["label"] == "real"
+    assert body["asset_results"][0]["review_recommendation"] == {}
+
+
 def test_generator_attribution_robustness_run_uses_real_image_perturbations(tmp_path: Path) -> None:
     _reset_training_pool()
     image_root = tmp_path / "robust-generator-images"

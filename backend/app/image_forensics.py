@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from app.models import (
@@ -79,13 +80,18 @@ def _prediction_or_fallback(
     prediction: dict[str, object] | None,
     trained: bool,
 ) -> dict[str, object] | None:
+    if trained and prediction:
+        return prediction
+    if not _demo_forensics_fallback_enabled():
+        return prediction
     demo_prediction = _known_demo_prediction(case, asset)
     if demo_prediction is not None:
         return demo_prediction
-    if trained and prediction:
-        return prediction
-    fallback = _cloud_demo_fallback_prediction(case, asset)
-    return fallback or prediction
+    return _cloud_demo_fallback_prediction(case, asset) or prediction
+
+
+def _demo_forensics_fallback_enabled() -> bool:
+    return os.getenv("SMARTPOLICE_ENABLE_DEMO_FORENSICS_FALLBACK", "").lower() in {"1", "true", "yes", "on"}
 
 
 def _known_demo_prediction(case: CaseSample, asset: CaseAsset) -> dict[str, object] | None:
