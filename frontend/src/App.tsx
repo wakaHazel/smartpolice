@@ -159,8 +159,7 @@ export function App() {
         if (cachedRealAnalysis) {
           writeCachedRealAnalysis(cachedRealAnalysis);
           setRealAnalysis(cachedRealAnalysis);
-        } else {
-          clearCachedRealAnalysis(caseId);
+        } else if (!locallyCachedRealAnalysis) {
           setRealAnalysis(null);
         }
         setImageForensics(cachedForensics);
@@ -228,6 +227,7 @@ export function App() {
       const nextCases = await fetchCases();
       setCases(nextCases);
       setMessage("案例已删除");
+      clearCachedRealAnalysis(caseItem.id);
       const fallbackId = nextCases[0]?.id ?? "";
       setSelectedCaseId(fallbackId);
       setRealAnalysis(null);
