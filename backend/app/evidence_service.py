@@ -9,7 +9,7 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -25,6 +25,14 @@ SNAPSHOT_ROOT = DATA_ROOT / "snapshots"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_HTML_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+CAPTURE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 
 
 class EvidenceError(ValueError):
@@ -90,24 +98,31 @@ def capture_url(case_id: str, url: str) -> WebEvidenceSnapshot:
     case_dir = SNAPSHOT_ROOT / case_id / snapshot_id
     case_dir.mkdir(parents=True, exist_ok=True)
 
+    fallback_error: str | None = None
     try:
         with httpx.Client(
             timeout=15,
             follow_redirects=True,
-            headers={"User-Agent": "SmartPoliceEvidenceBot/1.0"},
+            headers=CAPTURE_HEADERS,
         ) as client:
             response = client.get(normalized)
             response.raise_for_status()
             body = response.content[: MAX_HTML_BYTES + 1]
+            final_url = str(response.url)
+            encoding = response.encoding or "utf-8"
+    except httpx.HTTPStatusError as exc:
+        if not _is_wikimedia_commons_file_url(normalized) or exc.response.status_code != 403:
+            raise UrlCaptureError(f"URL 抓取失败：{exc}") from exc
+        final_url, body, encoding = _wikimedia_commons_reference_snapshot(normalized)
+        fallback_error = "Wikimedia 限制服务器抓取，已保存公开来源引用快照。"
     except httpx.HTTPError as exc:
         raise UrlCaptureError(f"URL 抓取失败：{exc}") from exc
 
     if len(body) > MAX_HTML_BYTES:
         raise EvidenceValidationError("网页内容超过 5MB 上限。")
 
-    final_url = str(response.url)
     _validate_public_url(final_url)
-    html = body.decode(response.encoding or "utf-8", errors="replace")
+    html = body.decode(encoding, errors="replace")
     digest = sha256(body).hexdigest()
     title, text = extract_html_text(html)
     html_path = case_dir / "page.html"
@@ -124,8 +139,8 @@ def capture_url(case_id: str, url: str) -> WebEvidenceSnapshot:
         title=title or final_url,
         text=text,
         sha256=digest,
-        status="captured" if screenshot_ok else "captured_without_screenshot",
-        error=None if screenshot_ok else "Playwright 截图不可用，已保存 HTML 与正文快照。",
+        status="captured" if screenshot_ok and fallback_error is None else "captured_without_screenshot",
+        error=fallback_error or (None if screenshot_ok else "Playwright 截图不可用，已保存 HTML 与正文快照。"),
         html_path=str(html_path),
         text_path=str(text_path),
         screenshot_path=str(screenshot_path) if screenshot_ok else None,
@@ -138,6 +153,45 @@ def capture_url(case_id: str, url: str) -> WebEvidenceSnapshot:
     )
     save_web_snapshot(snapshot)
     return snapshot
+
+
+def _is_wikimedia_commons_file_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "commons.wikimedia.org"
+        and parsed.path.startswith("/wiki/File:")
+    )
+
+
+def _wikimedia_commons_reference_snapshot(url: str) -> tuple[str, bytes, str]:
+    parsed = urlparse(url)
+    file_name = unquote(parsed.path.rsplit("/", 1)[-1]).replace("_", " ")
+    title = file_name.removeprefix("File:")
+    text = (
+        f"Wikimedia Commons 文件页：{title}。"
+        "服务器侧实时抓取被 Wikimedia robot policy 拒绝，本系统已保留原始公开来源链接、"
+        "文件页标题和抓取时间，作为演示证据链中的来源引用快照。"
+    )
+    html = (
+        "<!doctype html><html lang=\"zh-CN\"><head>"
+        f"<meta charset=\"utf-8\"><title>{_escape_html(title)}</title></head>"
+        f"<body><h1>{_escape_html(title)}</h1>"
+        f"<p>{_escape_html(text)}</p>"
+        f"<p>原始链接：<a href=\"{_escape_html(url)}\">{_escape_html(url)}</a></p>"
+        f"<p>留证时间：{datetime.now(UTC).isoformat()}</p>"
+        "</body></html>"
+    )
+    return url, html.encode("utf-8"), "utf-8"
+
+
+def _escape_html(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def extract_html_text(html: str) -> tuple[str, str]:

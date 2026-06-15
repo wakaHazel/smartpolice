@@ -680,6 +680,39 @@ def test_capture_url_saves_snapshot_and_fts(monkeypatch: Any) -> None:
     assert any(item["source_url"] == "https://example.com/notice" for item in search)
 
 
+def test_capture_url_keeps_wikimedia_reference_when_blocked(monkeypatch: Any) -> None:
+    class MockGetClient:
+        def __init__(self, **_: Any) -> None:
+            return None
+
+        def __enter__(self) -> "MockGetClient":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def get(self, url: str) -> httpx.Response:
+            request = httpx.Request("GET", url)
+            response = httpx.Response(403, request=request)
+            raise httpx.HTTPStatusError("403 Forbidden", request=request, response=response)
+
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *_: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("208.80.154.224", 443))])
+    monkeypatch.setattr(httpx, "Client", MockGetClient)
+    monkeypatch.setattr(evidence_service, "_capture_screenshot", lambda *_: False)
+
+    response = client.post(
+        "/cases/group-polarization-003/sources/capture",
+        json={"url": "https://commons.wikimedia.org/wiki/File:Sichuan_earthquake_save..JPG"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "captured_without_screenshot"
+    assert "Wikimedia" in body["error"]
+    assert body["title"] == "Sichuan earthquake save..JPG"
+    assert "服务器侧实时抓取被 Wikimedia robot policy 拒绝" in body["text"]
+
+
 def test_real_analysis_requires_real_inputs() -> None:
     response = client.post("/cases/police-trust-001/real-analysis")
     assert response.status_code == 422
