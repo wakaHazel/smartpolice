@@ -197,6 +197,10 @@ export function App() {
   const handleSelectCase = useCallback(
     (caseId: string) => {
       setSelectedCaseId(caseId);
+      setAnalysis(null);
+      setEvidenceBundle(null);
+      setRealAnalysis(null);
+      setImageForensics(null);
       void loadAnalysis(caseId);
     },
     [loadAnalysis],
@@ -647,11 +651,12 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
   );
   const groupedSources = groupedSourceDistribution(allCandidates);
   const displaySources = normalizeVisibleSourceDistribution(groupedSources);
-  const groupedRows = groupedSourceRows(displaySources);
+  const groupedRows = groupedSourceRows(displaySources, asset.top_candidate);
   const generatedSignal = Math.round(displaySources.aiTotal * 100);
-  const realSignal = Math.round(displaySources.real * 100);
-  const verdictTitle = displaySources.aiTotal >= displaySources.real ? "AI生成图" : "真实照片";
-  const nextSteps = compactForensicsNextSteps(generatedSignal);
+  const topSource = groupedRows[0];
+  const verdictTitle = primaryForensicsVerdict(asset.top_candidate);
+  const verdictSubtitle = forensicsVerdictSubtitle(topSource, displaySources);
+  const nextSteps = compactForensicsNextSteps(verdictTitle, generatedSignal);
   return (
     <div className="forensics-board">
       <div className="forensics-primary">
@@ -661,12 +666,7 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
         <div className="forensics-verdict">
           <span>初步结论</span>
           <strong>{verdictTitle}</strong>
-          <em>
-            {[
-              `AI生成线索 ${generatedSignal}%`,
-              `真实照片 ${realSignal}%`,
-            ].filter(Boolean).join(" · ")}
-          </em>
+          <em>{verdictSubtitle}</em>
         </div>
       </div>
       <div className="candidate-summary-list candidate-summary-list-three" aria-label="来源类别分布">
@@ -1108,19 +1108,56 @@ function normalizeVisibleSourceDistribution(grouped: GroupedSourceDistribution):
   };
 }
 
-function groupedSourceRows(grouped: GroupedSourceDistribution): Array<{ confidence: number; label: string; name: string }> {
-  return [
+function groupedSourceRows(
+  grouped: GroupedSourceDistribution,
+  topCandidate?: string,
+): Array<{ confidence: number; label: string; name: string }> {
+  const topGroupName = visibleSourceGroupName(topCandidate ?? "");
+  const sorted = [
     { name: "GPT-image-2", confidence: grouped.gptImage2 },
     { name: "其他AI模型", confidence: grouped.otherAi },
     { name: "真实照片", confidence: grouped.real },
-  ]
-    .sort((left, right) => right.confidence - left.confidence)
-    .map((item, index) => ({ ...item, label: `类别${index + 1}` }));
+  ].sort((left, right) => right.confidence - left.confidence);
+  if (topGroupName) {
+    const topIndex = sorted.findIndex((item) => item.name === topGroupName);
+    if (topIndex > 0) {
+      const [topItem] = sorted.splice(topIndex, 1);
+      sorted.unshift(topItem);
+    }
+  }
+  return sorted.map((item, index) => ({ ...item, label: `类别${index + 1}` }));
 }
 
-function compactForensicsNextSteps(generatedSignal: number): string[] {
-  const firstStep =
-    generatedSignal >= 50
+function visibleSourceGroupName(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/_/g, "-");
+  if (["gpt-image2", "gpt-image-2", "gpt image2"].includes(normalized)) {
+    return "GPT-image-2";
+  }
+  if (["real", "real-photo"].includes(normalized)) {
+    return "真实照片";
+  }
+  if (!normalized || ["unknown", "not-gpt-image2"].includes(normalized)) {
+    return "";
+  }
+  return "其他AI模型";
+}
+
+function forensicsVerdictSubtitle(
+  topSource: { confidence: number; name: string } | undefined,
+  grouped: GroupedSourceDistribution,
+): string {
+  if (!topSource) {
+    return "等待来源类别概率";
+  }
+  const contrastName = topSource.name === "真实照片" ? "GPT-image-2" : "真实照片";
+  const contrastValue = topSource.name === "真实照片" ? grouped.gptImage2 : grouped.real;
+  return `最高类别 ${topSource.name} ${Math.round(topSource.confidence * 100)}% · ${contrastName} ${Math.round(contrastValue * 100)}%`;
+}
+
+function compactForensicsNextSteps(verdictTitle: string, generatedSignal: number): string[] {
+  const firstStep = verdictTitle === "真实照片"
+    ? "按真实照片待核验处置，重点核对发布时间、原始出处和是否被移花接木。"
+    : generatedSignal >= 50
       ? "按疑似AI生成图片处置，先固定原图、来源链接和发布账号信息。"
       : "先按待核验图片处置，补充原图、来源链接和发布账号信息。";
   return [

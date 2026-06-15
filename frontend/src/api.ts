@@ -157,7 +157,9 @@ export async function runImageForensics(caseId: string): Promise<ImageForensicsR
 }
 
 export async function fetchImageForensics(caseId: string): Promise<ImageForensicsResult | null> {
-  const response = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/image-forensics`);
+  const response = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/image-forensics?_=${Date.now()}`, {
+    cache: "no-store",
+  });
   if (response.status === 404) {
     return null;
   }

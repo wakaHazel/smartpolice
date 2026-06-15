@@ -26,7 +26,7 @@ from app.storage import (
 DEMO_ASSET_DIR = ROOT / "backend" / "demo_assets"
 NANO_BANANA_COLLAPSE_CASE_ID = "demo-doubao-collapse-disaster-001"
 GPT_STATION_CONFLICT_CASE_ID = "demo-gptimage-station-police-conflict-001"
-REAL_BEIJING_ROAD_CASE_ID = "demo-real-beijing-road-street-001"
+REAL_DISASTER_RESCUE_CASE_ID = "demo-real-beijing-road-street-001"
 
 NANO_BANANA_COLLAPSE_CASE = CaseSample(
     id=NANO_BANANA_COLLAPSE_CASE_ID,
@@ -86,43 +86,43 @@ GPT_STATION_CONFLICT_CASE = CaseSample(
     sensitivity_notes="涉警执法冲突类画面容易损害公安机关公信力并激化线下围观，应优先固定原图和传播链。",
     review_note="演示视频涉警高敏感案例：使用用户提供的 GPT-image 原始清晰图，展示报告生成链路。",
 )
-REAL_BEIJING_ROAD_CASE = CaseSample(
-    id=REAL_BEIJING_ROAD_CASE_ID,
-    title="公开来源真实街面照片核验",
-    scenario="公共场所秩序信息核查",
+REAL_DISASTER_RESCUE_CASE = CaseSample(
+    id=REAL_DISASTER_RESCUE_CASE_ID,
+    title="公开来源真实灾情救援照片核验",
+    scenario="灾害险情核查",
     platform="Wikimedia Commons / 演示导入",
-    publish_time="2025-02-22",
+    publish_time="2008-05-14",
     source_url=(
-        "https://commons.wikimedia.org/wiki/File:20250222_Site_of_the_Ancient_Street_at_Beijing_Road_01.jpg"
+        "https://commons.wikimedia.org/wiki/File:Sichuan_earthquake_save..JPG"
     ),
     content=(
-        "网传广州北京路古道遗址街面照片，画面显示城市道路中的玻璃保护区、护栏和周边公共空间。"
-        "核查重点是确认该图是否为公开来源真实街面照片。"
+        "演示样本为汶川地震后救援人员在受损建筑废墟中开展搜救的公开来源真实照片。"
+        "该图用于和 AI 生成灾情图片形成对照，核查重点是确认系统不会把真实灾情救援现场误判为生成图。"
     ),
     image_description=(
-        "待检图片为 1800x1200 的 JPEG 实拍照片：街面玻璃保护区下方可见古道遗址，周边有路面、"
-        "护栏和城市公共空间元素。"
+        "待检图片为 3264x2448 的 JPEG 实拍照片：救援人员站在受损建筑和瓦砾现场，画面具有真实灾害"
+        "救援场景、自然光照和现场杂乱细节。"
     ),
     spread=SpreadMetrics(
-        views=8200,
-        reposts=120,
-        comments=65,
-        likes=430,
-        velocity="演示设定：低速传播，主要用于核验公开来源真实照片",
+        views=64200,
+        reposts=1480,
+        comments=620,
+        likes=3100,
+        velocity="演示设定：灾情图片被转发求证，需区分真实救援照片与AI编造灾情图",
     ),
-    manual_label="公开来源真实照片，用于演示真实照片核验",
-    manual_risk_score=18,
-    tags=["真实照片", "Wikimedia Commons", "公共街面", "CC BY-SA 4.0"],
-    sensitivity_notes="公开街面实拍图，未设置灾情、涉警冲突等高敏感叙事；演示重点是来源可追溯和真实照片识别。",
+    manual_label="公开来源真实灾情救援照片，用于演示真实照片核验",
+    manual_risk_score=32,
+    tags=["真实照片", "Wikimedia Commons", "汶川地震", "救援现场", "Public Domain"],
+    sensitivity_notes="真实灾情救援图片仍需核验来源、时间和地点，避免被拼接进新的本地灾情谣言叙事。",
     review_note=(
-        "真实照片对照案例：来源 Wikimedia Commons；文件 20250222 Site of the Ancient Street at Beijing Road 01.jpg；"
-        "作者 Windmemories；许可 CC BY-SA 4.0。"
+        "真实照片对照案例：来源 Wikimedia Commons；文件 Sichuan earthquake save..JPG；"
+        "页面标注 Public domain / PD-self，分类包含 2008 Sichuan earthquake relief。"
     ),
 )
 DEMO_CASES = [
     NANO_BANANA_COLLAPSE_CASE,
     GPT_STATION_CONFLICT_CASE,
-    REAL_BEIJING_ROAD_CASE,
+    REAL_DISASTER_RESCUE_CASE,
 ]
 REJECTED_DEMO_IDS = [
     "demo-video-001-police-station",
@@ -170,9 +170,9 @@ def _copy_demo_images() -> list[tuple[str, Path, str, str]]:
             False,
         ),
         (
-            REAL_BEIJING_ROAD_CASE_ID,
-            DEMO_ASSET_DIR / "real-beijing-road-ancient-street.jpg",
-            "real-beijing-road-ancient-street.jpg",
+            REAL_DISASTER_RESCUE_CASE_ID,
+            DEMO_ASSET_DIR / "real-sichuan-earthquake-rescue.jpg",
+            "real-sichuan-earthquake-rescue.jpg",
             "image/jpeg",
             True,
         ),
