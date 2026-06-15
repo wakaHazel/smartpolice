@@ -387,6 +387,31 @@ svg {
   box-shadow: none;
 }
 
+.field-block {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.field-block > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.field-block.compact input {
+  padding-inline: 8px;
+}
+
+.form-hint {
+  margin: -1px 0 1px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

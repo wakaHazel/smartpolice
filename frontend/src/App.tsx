@@ -367,7 +367,7 @@ export function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">公安机关涉网谣言图像取证</p>
-          <h1>公共安全AIGC图像来源取证研判工作台</h1>
+          <h1>公共安全AIGC图像取证研判台</h1>
         </div>
         <div className="topbar-badge">
           <ShieldAlert size={18} />
@@ -747,20 +747,55 @@ function CaseForm({
 
   return (
     <section className="create-panel">
-      <input onChange={(event) => update("title", event.target.value)} placeholder="案件标题" value={form.title} />
-      <select onChange={(event) => update("scenario", event.target.value)} value={form.scenario}>
-        {["涉警公信力谣言", "灾害险情谣言", "群体对立煽动型谣言", "低风险误传"].map((item) => (
-          <option key={item} value={item}>{item}</option>
-        ))}
-      </select>
-      <textarea onChange={(event) => update("content", event.target.value)} placeholder="网传内容" rows={3} value={form.content} />
-      <textarea onChange={(event) => update("image_description", event.target.value)} placeholder="图片/截图描述" rows={2} value={form.image_description} />
+      <label className="field-block">
+        <span>案件标题</span>
+        <input onChange={(event) => update("title", event.target.value)} placeholder="例如：网传车站执法冲突图片核查" value={form.title} />
+      </label>
+      <label className="field-block">
+        <span>案件类型</span>
+        <select onChange={(event) => update("scenario", event.target.value)} value={form.scenario}>
+          {["涉警公信力谣言", "灾害险情谣言", "群体对立煽动型谣言", "低风险误传"].map((item) => (
+            <option key={item} value={item}>{item}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field-block">
+        <span>网传内容</span>
+        <textarea onChange={(event) => update("content", event.target.value)} placeholder="粘贴网传文字、标题或简要说法" rows={3} value={form.content} />
+      </label>
+      <label className="field-block">
+        <span>图片情况</span>
+        <textarea onChange={(event) => update("image_description", event.target.value)} placeholder="简单描述图片画面；不确定可以先写“待上传图片”" rows={2} value={form.image_description} />
+      </label>
       <div className="form-row three">
-        <input onChange={(event) => updateSpread("views", event.target.value)} type="number" value={form.spread.views} />
-        <input onChange={(event) => updateSpread("reposts", event.target.value)} type="number" value={form.spread.reposts} />
-        <input onChange={(event) => updateSpread("comments", event.target.value)} type="number" value={form.spread.comments} />
+        <label className="field-block compact">
+          <span>浏览量</span>
+          <input onChange={(event) => updateSpread("views", event.target.value)} type="number" value={form.spread.views} />
+        </label>
+        <label className="field-block compact">
+          <span>转发量</span>
+          <input onChange={(event) => updateSpread("reposts", event.target.value)} type="number" value={form.spread.reposts} />
+        </label>
+        <label className="field-block compact">
+          <span>评论量</span>
+          <input onChange={(event) => updateSpread("comments", event.target.value)} type="number" value={form.spread.comments} />
+        </label>
       </div>
-      <input onChange={(event) => onTagTextChange(event.target.value)} placeholder="标签，逗号分隔" value={tagText} />
+      <div className="form-row two">
+        <label className="field-block compact">
+          <span>点赞量</span>
+          <input onChange={(event) => updateSpread("likes", event.target.value)} type="number" value={form.spread.likes} />
+        </label>
+        <label className="field-block compact">
+          <span>传播速度</span>
+          <input onChange={(event) => updateSpread("velocity", event.target.value)} placeholder="例如：同城群快速转发" value={form.spread.velocity} />
+        </label>
+      </div>
+      <p className="form-hint">传播数据只用于风险背景；没有准确数字时可保留默认值，不影响图片上传和来源分析。</p>
+      <label className="field-block">
+        <span>标签</span>
+        <input onChange={(event) => onTagTextChange(event.target.value)} placeholder="例如：涉警，AI生成，待核验" value={tagText} />
+      </label>
       <button className="full-button" onClick={() => void onSubmit()} type="button"><Save size={15} />保存并研判</button>
     </section>
   );
