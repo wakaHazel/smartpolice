@@ -20,8 +20,9 @@ import httpx
 from PIL import Image, ImageDraw
 
 from app import evidence_service
+from app import real_analysis
 from app.main import app
-from app.models import ExternalTrainingSample
+from app.models import CaseAsset, ExternalTrainingSample
 from app.multimodal_training import (
     GENERATOR_BINARY_GATE_THRESHOLD,
     GENERATOR_REAL_PROTECTION_MARGIN,
@@ -1013,6 +1014,21 @@ def test_real_analysis_uses_dashscope_vision_when_enabled(monkeypatch: Any) -> N
     assert calls
     assert calls[0]["url"] == "https://dashscope.test/compatible-mode/v1/chat/completions"
     assert calls[0]["json"]["model"] == "qwen-vl-test"
+
+
+def test_real_analysis_sends_compressed_jpeg_to_vision_model(tmp_path: Path) -> None:
+    image_path = tmp_path / "large.png"
+    Image.new("RGB", (1800, 1200), color=(30, 80, 140)).save(image_path)
+    asset = client.post(
+        "/cases/group-polarization-003/assets",
+        files={"file": ("large.png", image_path.read_bytes(), "image/png")},
+    ).json()
+
+    data_url = real_analysis._image_data_url(CaseAsset.model_validate(asset))
+
+    assert data_url.startswith("data:image/jpeg;base64,")
+    encoded = data_url.split(",", 1)[1]
+    assert len(encoded) < len(image_path.read_bytes()) * 2
 
 
 def test_localvision_training_rejects_insufficient_labeled_samples() -> None:

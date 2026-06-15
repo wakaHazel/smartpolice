@@ -4,9 +4,11 @@ import base64
 import json
 import os
 import re
+from io import BytesIO
 from pathlib import Path
 
 from dotenv import load_dotenv
+from PIL import Image
 
 from app.analyzer import assess_risk
 from app.llm_workflows import LlmOutputParseError
@@ -50,6 +52,8 @@ CLOUD_REVIEW_ENV = "SMARTPOLICE_ENABLE_CLOUD_REVIEW"
 CLOUD_REPORT_ENV = "SMARTPOLICE_ENABLE_CLOUD_REPORT"
 CLOUD_VISION_REQUIRED_ENV = "SMARTPOLICE_REQUIRE_LOCAL_VISION"
 LOCAL_VLM_ENABLED_ENV = "SMARTPOLICE_ENABLE_LOCAL_VLM"
+DEFAULT_VISION_MODEL_MAX_SIDE = 1024
+DEFAULT_VISION_MODEL_JPEG_QUALITY = 82
 
 
 class RealAnalysisInputError(ValueError):
@@ -612,9 +616,33 @@ def _case_text_for_models(
 
 
 def _image_data_url(asset: CaseAsset) -> str:
-    raw = Path(asset.storage_path).read_bytes()
+    raw = _vision_model_image_bytes(Path(asset.storage_path))
     encoded = base64.b64encode(raw).decode("ascii")
-    return f"data:{asset.content_type};base64,{encoded}"
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def _vision_model_image_bytes(path: Path) -> bytes:
+    try:
+        with Image.open(path) as image:
+            normalized = image.convert("RGB")
+            max_side = _int_env(
+                "SMARTPOLICE_VISION_MODEL_MAX_SIDE",
+                DEFAULT_VISION_MODEL_MAX_SIDE,
+                minimum=320,
+                maximum=2048,
+            )
+            quality = _int_env(
+                "SMARTPOLICE_VISION_MODEL_JPEG_QUALITY",
+                DEFAULT_VISION_MODEL_JPEG_QUALITY,
+                minimum=40,
+                maximum=95,
+            )
+            normalized.thumbnail((max_side, max_side))
+            output = BytesIO()
+            normalized.save(output, format="JPEG", quality=quality, optimize=True)
+            return output.getvalue()
+    except (OSError, ValueError):
+        return path.read_bytes()
 
 
 def _vision_provider() -> str:
@@ -631,6 +659,15 @@ def _env_flag(name: str) -> bool:
     _load_env_file()
     value = os.getenv(name, "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    _load_env_file()
+    try:
+        value = int(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
+    return min(max(value, minimum), maximum)
 
 
 def _local_vlm_http_enabled() -> bool:
