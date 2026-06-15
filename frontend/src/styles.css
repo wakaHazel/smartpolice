@@ -145,7 +145,7 @@ svg {
   max-width: none;
   margin: 5px 0 0;
   color: var(--ink-strong);
-  font-size: clamp(34px, 3.2vw, 50px);
+  font-size: clamp(32px, 2.9vw, 46px);
   line-height: 1.06;
   letter-spacing: 0;
   white-space: nowrap;
@@ -2179,7 +2179,7 @@ svg {
 @media (max-width: 640px) {
   .topbar h1 {
     max-width: 100%;
-    font-size: clamp(22px, 7vw, 30px);
+    font-size: clamp(22px, 6.4vw, 28px);
     line-height: 1.18;
     white-space: normal;
     word-break: keep-all;
