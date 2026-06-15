@@ -146,6 +146,19 @@ export async function runRealAnalysis(caseId: string): Promise<RealCaseAnalysisR
   return response.json() as Promise<RealCaseAnalysisResult>;
 }
 
+export async function fetchRealAnalysis(caseId: string): Promise<RealCaseAnalysisResult | null> {
+  const response = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/real-analysis?_=${Date.now()}`, {
+    cache: "no-store",
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "无法加载已保存的证据链报告"));
+  }
+  return response.json() as Promise<RealCaseAnalysisResult>;
+}
+
 export async function runImageForensics(caseId: string): Promise<ImageForensicsResult> {
   const response = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/image-forensics`, {
     method: "POST",

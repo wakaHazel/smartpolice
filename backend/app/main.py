@@ -127,6 +127,7 @@ from app.storage import (
     create_case_sample,
     delete_case_sample,
     delete_image_forensics_result,
+    delete_real_analysis_result,
     get_case_evidence_bundle,
     get_agent_metrics,
     get_latest_training_run,
@@ -142,8 +143,10 @@ from app.storage import (
     list_web_snapshots,
     load_case_sample,
     load_image_forensics_result,
+    load_real_analysis_result,
     record_agent_run,
     save_image_forensics_result,
+    save_real_analysis_result,
     search_knowledge,
     update_case_label,
 )
@@ -238,6 +241,7 @@ async def upload_case_asset(case_id: str, file: UploadFile) -> CaseAsset:
     try:
         asset = await save_uploaded_asset(case_id, file)
         delete_image_forensics_result(case_id)
+        delete_real_analysis_result(case_id)
         return asset
     except EvidenceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -250,7 +254,9 @@ def capture_case_source(
 ) -> WebEvidenceSnapshot:
     _case_or_404(case_id)
     try:
-        return capture_url(case_id, payload.url)
+        snapshot = capture_url(case_id, payload.url)
+        delete_real_analysis_result(case_id)
+        return snapshot
     except EvidenceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
@@ -275,8 +281,13 @@ def case_audit(case_id: str, limit: int = 50) -> CaseAuditBundle:
 @app.post("/cases/{case_id}/real-analysis", response_model=RealCaseAnalysisResult)
 def case_real_analysis(case_id: str) -> RealCaseAnalysisResult:
     case = _case_or_404(case_id)
+    cached = load_real_analysis_result(case_id)
+    if cached is not None:
+        return cached
     try:
-        return run_real_case_analysis(case)
+        result = run_real_case_analysis(case)
+        save_real_analysis_result(result)
+        return result
     except RealAnalysisInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except LlmOutputParseError as exc:
@@ -288,6 +299,15 @@ def case_real_analysis(case_id: str) -> RealCaseAnalysisResult:
             status_code=exc.status_code,
             detail={"message": str(exc), "audit_id": exc.audit_id},
         ) from exc
+
+
+@app.get("/cases/{case_id}/real-analysis", response_model=RealCaseAnalysisResult)
+def cached_case_real_analysis(case_id: str) -> RealCaseAnalysisResult:
+    _case_or_404(case_id)
+    result = load_real_analysis_result(case_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="暂无已保存的证据链报告。")
+    return result
 
 
 @app.post("/cases/{case_id}/image-forensics", response_model=ImageForensicsResult)

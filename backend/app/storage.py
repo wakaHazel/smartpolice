@@ -28,6 +28,7 @@ from app.models import (
     KnowledgeSearchResult,
     ModelInvocationAudit,
     LocalVisionCalibrationRunResult,
+    RealCaseAnalysisResult,
     TrainingDataStatus,
     TrainingTaskStatus,
     TrainingRunResult,
@@ -299,6 +300,15 @@ def initialize_database() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS real_analysis_runs (
+                case_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS web_snapshots (
                 id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL,
@@ -411,6 +421,7 @@ def update_case_label(case_id: str, payload: CaseLabelRequest) -> CaseSample:
         }
     )
     save_case_sample(updated)
+    delete_real_analysis_result(case_id)
     return updated
 
 
@@ -492,6 +503,7 @@ def delete_case_sample(case_id: str) -> CaseSample:
             "llm_invocations",
             "case_assets",
             "image_forensics_runs",
+            "real_analysis_runs",
             "web_snapshots",
             "evidence_items",
             "case_samples",
@@ -1559,6 +1571,46 @@ def delete_image_forensics_result(case_id: str) -> None:
     initialize_database()
     with sqlite3.connect(DB_PATH) as connection:
         connection.execute("DELETE FROM image_forensics_runs WHERE case_id = ?", (case_id,))
+        connection.commit()
+
+
+def save_real_analysis_result(result: RealCaseAnalysisResult) -> None:
+    initialize_database()
+    with sqlite3.connect(DB_PATH) as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO real_analysis_runs (case_id, created_at, payload)
+            VALUES (?, ?, ?)
+            """,
+            (
+                result.case.id,
+                datetime.now(UTC).isoformat(),
+                result.model_dump_json(),
+            ),
+        )
+        connection.commit()
+
+
+def load_real_analysis_result(case_id: str) -> RealCaseAnalysisResult | None:
+    initialize_database()
+    with sqlite3.connect(DB_PATH) as connection:
+        row = connection.execute(
+            """
+            SELECT payload
+            FROM real_analysis_runs
+            WHERE case_id = ?
+            """,
+            (case_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return RealCaseAnalysisResult.model_validate(json.loads(str(row[0])))
+
+
+def delete_real_analysis_result(case_id: str) -> None:
+    initialize_database()
+    with sqlite3.connect(DB_PATH) as connection:
+        connection.execute("DELETE FROM real_analysis_runs WHERE case_id = ?", (case_id,))
         connection.commit()
 
 

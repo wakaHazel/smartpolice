@@ -23,6 +23,7 @@ import {
   fetchCaseEvidence,
   fetchCases,
   fetchImageForensics,
+  fetchRealAnalysis,
   runFullAnalysis,
   runImageForensics,
   runRealAnalysis,
@@ -145,16 +146,17 @@ export function App() {
       setIsBusy(true);
       setError("");
       try {
-        const [result, bundle, cachedForensics] = await Promise.all([
-          runFullAnalysis(caseId),
-          fetchCaseEvidence(caseId),
-          fetchImageForensics(caseId).catch(() => null),
-        ]);
-        setAnalysis(result);
-        setEvidenceBundle(bundle);
-        setRealAnalysis((current) => (current?.case.id === caseId ? current : null));
-        setImageForensics(cachedForensics);
-        setSourceUrlInput(result.case.source_url.startsWith("http") ? result.case.source_url : "");
+      const [result, bundle, cachedForensics] = await Promise.all([
+        runFullAnalysis(caseId),
+        fetchCaseEvidence(caseId),
+        fetchImageForensics(caseId).catch(() => null),
+      ]);
+      const cachedRealAnalysis = await fetchRealAnalysis(caseId).catch(() => null);
+      setAnalysis(result);
+      setEvidenceBundle(bundle);
+      setRealAnalysis(cachedRealAnalysis);
+      setImageForensics(cachedForensics);
+      setSourceUrlInput(result.case.source_url.startsWith("http") ? result.case.source_url : "");
       } catch (err) {
         setError(err instanceof Error ? err.message : "研判失败");
       } finally {
@@ -270,6 +272,7 @@ export function App() {
       const asset = await uploadCaseAsset(selectedCase.id, file);
       setMessage(`图片已上传并固定：${asset.sha256.slice(0, 12)}`);
       setImageForensics(null);
+      setRealAnalysis(null);
       await refreshEvidence(selectedCase.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "图片上传失败");
@@ -313,6 +316,7 @@ export function App() {
     try {
       const snapshot = await captureCaseSource(selectedCase.id, sourceUrlInput);
       setMessage(`来源页面已留证：${snapshot.sha256.slice(0, 12)}`);
+      setRealAnalysis(null);
       await refreshEvidence(selectedCase.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "URL 取证失败");
@@ -323,6 +327,11 @@ export function App() {
 
   const handleRealAnalysis = useCallback(async () => {
     if (!selectedCase) {
+      return;
+    }
+    if (realAnalysis?.case.id === selectedCase.id) {
+      setActiveTab("report");
+      setMessage("已打开已保存的证据链报告");
       return;
     }
     setIsRealRunning(true);
@@ -340,7 +349,9 @@ export function App() {
     } finally {
       setIsRealRunning(false);
     }
-  }, [refreshEvidence, selectedCase]);
+  }, [realAnalysis, refreshEvidence, selectedCase]);
+
+  const hasSavedRealAnalysis = realAnalysis?.case.id === selectedCaseId;
 
   const handleCopyReport = useCallback(async () => {
     const markdown = realAnalysis?.report_markdown;
@@ -525,7 +536,7 @@ export function App() {
                 <div className="action-grid">
                   <button onClick={() => void loadAnalysis(analysis.case.id)} type="button"><RefreshCcw size={15} />重新研判</button>
                   <button disabled={isRealRunning || !(evidenceBundle?.assets.length)} onClick={() => void handleRealAnalysis()} type="button">
-                    <ShieldAlert size={15} />{isRealRunning ? "证据链生成中" : "生成证据链报告"}
+                    <ShieldAlert size={15} />{isRealRunning ? "证据链生成中" : hasSavedRealAnalysis ? "打开证据链报告" : "生成证据链报告"}
                   </button>
                   <button onClick={() => void handleCopyReport()} type="button"><Copy size={15} />复制报告</button>
                   <button onClick={handleDownloadReport} type="button"><Download size={15} />导出报告</button>

@@ -965,6 +965,64 @@ def test_real_analysis_can_use_explicit_cloud_review_and_report(monkeypatch: Any
     assert body["structured_review"]["risk_score"] == 82
     assert "正式研判报告" in body["report_markdown"]
 
+    cached_get = client.get(f"/cases/{case_id}/real-analysis")
+    assert cached_get.status_code == 200
+    assert cached_get.json()["report_audit_id"] == body["report_audit_id"]
+    assert call_count["count"] == 3
+
+    cached_post = client.post(f"/cases/{case_id}/real-analysis")
+    assert cached_post.status_code == 200
+    assert cached_post.json()["review_audit_id"] == body["review_audit_id"]
+    assert cached_post.json()["report_markdown"] == body["report_markdown"]
+    assert call_count["count"] == 3
+
+
+def test_real_analysis_cache_is_cleared_after_new_upload() -> None:
+    case_id = "pytest-real-analysis-cache-clear-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "证据链报告缓存测试",
+            "scenario": "灾害险情谣言",
+            "platform": "本地测试",
+            "publish_time": "2026-06-15 12:00",
+            "source_url": "本地测试",
+            "content": "测试已生成报告在图片证据变化后失效。",
+            "image_description": "测试图片",
+            "spread": {
+                "views": 1000,
+                "reposts": 20,
+                "comments": 30,
+                "likes": 40,
+                "velocity": "低速传播",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": 50,
+            "tags": ["缓存测试"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("first.png", _png_1x1(), "image/png")},
+    )
+    assert upload.status_code == 200
+    assert client.get(f"/cases/{case_id}/real-analysis").status_code == 404
+
+    analysis_response = client.post(f"/cases/{case_id}/real-analysis")
+    assert analysis_response.status_code == 200
+    assert client.get(f"/cases/{case_id}/real-analysis").status_code == 200
+
+    second_upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("second.png", _png_1x1(), "image/png")},
+    )
+    assert second_upload.status_code == 200
+    assert client.get(f"/cases/{case_id}/real-analysis").status_code == 404
+
 
 def test_real_analysis_uses_dashscope_vision_when_enabled(monkeypatch: Any) -> None:
     case_id = "pytest-dashscope-vision-only"
