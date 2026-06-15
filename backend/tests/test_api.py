@@ -946,6 +946,75 @@ def test_real_analysis_can_use_explicit_cloud_review_and_report(monkeypatch: Any
     assert "正式研判报告" in body["report_markdown"]
 
 
+def test_real_analysis_uses_dashscope_vision_when_enabled(monkeypatch: Any) -> None:
+    case_id = "pytest-dashscope-vision-only"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "网传灾情图片核验",
+            "scenario": "灾害险情谣言",
+            "platform": "短视频平台",
+            "publish_time": "2026-06-15 10:00",
+            "source_url": "https://example.com/dashscope",
+            "content": "网传某地发生坍塌灾情，需核查图片是否真实。",
+            "image_description": "待云端 Qwen-VL 视觉描述器分析。",
+            "spread": {
+                "views": 80000,
+                "reposts": 1800,
+                "comments": 700,
+                "likes": 3200,
+                "velocity": "同城群快速转发",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": 70,
+            "tags": ["灾情", "图片核验"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("scene.png", _png_1x1(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    _configure_dashscope(monkeypatch)
+    monkeypatch.delenv("VISION_PROVIDER", raising=False)
+    monkeypatch.setenv("SMARTPOLICE_ENABLE_LOCAL_VLM", "0")
+    calls: list[dict[str, Any]] = []
+
+    class DashScopeVisionMockClient(MockHttpxClient):
+        def post(
+            self,
+            url: str,
+            headers: dict[str, str],
+            json: dict[str, Any],
+        ) -> MockResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            content = (
+                '{"ocr_text": ["现场救援"], "visual_facts": ["画面包含救援人员和瓦砾"], '
+                '"aigc_or_tamper_signals": ["局部文字需复核"], '
+                '"text_image_consistency": ["与灾情描述部分一致"], '
+                '"generator_candidates": [], "uncertainties": ["需核验来源"], "confidence": 0.72}'
+            )
+            return MockResponse({"choices": [{"message": {"content": content}}], "usage": {"total_tokens": 66}})
+
+    monkeypatch.setattr(httpx, "Client", DashScopeVisionMockClient)
+
+    response = client.post(f"/cases/{case_id}/real-analysis")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["multimodal_results"][0]["provider"] == "DashScope"
+    assert body["multimodal_results"][0]["selected_model"] == "qwen-vl-test"
+    assert body["multimodal_results"][0]["structured"]["visual_facts"]
+    assert calls
+    assert calls[0]["url"] == "https://dashscope.test/compatible-mode/v1/chat/completions"
+    assert calls[0]["json"]["model"] == "qwen-vl-test"
+
+
 def test_localvision_training_rejects_insufficient_labeled_samples() -> None:
     response = client.post(
         "/training/local-vision/run",

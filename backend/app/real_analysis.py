@@ -619,7 +619,11 @@ def _image_data_url(asset: CaseAsset) -> str:
 
 def _vision_provider() -> str:
     _load_env_file()
-    value = os.getenv(VISION_PROVIDER_ENV, DEFAULT_VISION_PROVIDER).strip()
+    value = os.getenv(VISION_PROVIDER_ENV, "").strip()
+    if value:
+        return value
+    if _dashscope_vision_enabled():
+        return "DashScope"
     return value or DEFAULT_VISION_PROVIDER
 
 
@@ -630,6 +634,8 @@ def _env_flag(name: str) -> bool:
 
 
 def _local_vlm_http_enabled() -> bool:
+    if _dashscope_vision_enabled():
+        return True
     if _pytest_blocks_local_vlm_http():
         return False
     return _env_flag(LOCAL_VLM_ENABLED_ENV)
@@ -639,6 +645,10 @@ def _local_vlm_http_required() -> bool:
     if _pytest_blocks_local_vlm_http():
         return False
     return _env_flag(CLOUD_VISION_REQUIRED_ENV)
+
+
+def _dashscope_vision_enabled() -> bool:
+    return _env_flag("ENABLE_DASHSCOPE") or _env_flag("SMARTPOLICE_ENABLE_DASHSCOPE")
 
 
 def _pytest_blocks_local_vlm_http() -> bool:
