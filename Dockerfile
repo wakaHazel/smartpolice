@@ -8,8 +8,10 @@ RUN npm run build
 
 FROM python:3.12-slim
 
+ARG SMARTPOLICE_BUILD_COMMIT=unknown
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    SMARTPOLICE_BUILD_COMMIT=${SMARTPOLICE_BUILD_COMMIT} \
     PYTHONPATH=/app/backend \
     SMARTPOLICE_DB_PATH=/app/backend/data/smartpolice.db \
     SMARTPOLICE_DATA_ROOT=/app/backend/data \

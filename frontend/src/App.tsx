@@ -366,8 +366,8 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">公共安全图像取证</p>
-          <h1>图片来源研判</h1>
+          <p className="eyebrow">公安机关涉网谣言图像取证</p>
+          <h1>公共安全AIGC图像来源取证研判工作台</h1>
         </div>
         <div className="topbar-badge">
           <ShieldAlert size={18} />

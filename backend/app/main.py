@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import os
 from pathlib import Path
+import subprocess
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -182,6 +183,11 @@ if FRONTEND_DIST.exists():
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/version")
+def version() -> dict[str, str]:
+    return {"commit": os.getenv("SMARTPOLICE_BUILD_COMMIT") or _git_commit()}
 
 
 @app.get("/", include_in_schema=False)
@@ -704,6 +710,19 @@ def _case_or_404(case_id: str) -> CaseSample:
         return load_case_sample(case_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Case not found: {case_id}") from exc
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parents[2],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        ).strip()
+    except Exception:
+        return "unknown"
 
 
 @app.get("/{path:path}", include_in_schema=False)
