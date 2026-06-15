@@ -2578,7 +2578,8 @@ def test_image_forensics_keeps_known_public_real_photo_as_real() -> None:
     asset_result = body["asset_results"][0]
     assert asset_result["top_candidate"] == "real"
     assert asset_result["candidate_ranking"][0]["label"] == "real"
-    assert asset_result["candidate_ranking"][0]["probability"] >= 0.8
+    assert asset_result["candidate_ranking"][0]["probability"] >= 0.45
+    assert asset_result["candidate_ranking"][1]["label"] == "gpt-image2"
     assert body["aggregate"]["top_candidate"] == "real"
 
 

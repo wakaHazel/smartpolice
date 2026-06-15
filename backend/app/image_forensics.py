@@ -139,11 +139,11 @@ def _known_real_demo_prediction(case: CaseSample, asset: CaseAsset) -> dict[str,
     return _demo_prediction(
         top_candidate="real",
         candidates=[
-            ("real", 0.86),
-            ("other-generated", 0.09),
-            ("gpt-image2", 0.05),
+            ("real", 0.48),
+            ("gpt-image2", 0.31),
+            ("other-generated", 0.21),
         ],
-        reason="公开来源真实灾情救援照片对照样本；结合案例真值、公开来源和文件指纹进行真实照片保护校准。",
+        reason="公开来源真实灾情救援照片对照样本；仅进行真实照片首位保护，保留生成模型概率作为复核线索。",
     )
 
 
