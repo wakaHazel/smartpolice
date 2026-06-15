@@ -440,7 +440,11 @@ def _provider_status(config: ProviderConfig) -> ModelProviderStatus:
     if config.local_offline:
         runtime_health = "local-offline-ready"
     elif config.provider == "LocalVision" and not missing_env:
-        runtime_ready, runtime_health = _local_vision_health(base_url, next(iter(default_models.values())))
+        runtime_ready, runtime_health = _local_vision_health(
+            base_url,
+            next(iter(default_models.values())),
+            api_key,
+        )
     return ModelProviderStatus(
         provider=config.provider,
         configured=not missing_env and runtime_ready,
@@ -625,9 +629,19 @@ def _prompt_from_payload(payload: dict[str, object]) -> str:
     return "\n".join(parts)
 
 
-def _local_vision_health(base_url: str | None, model: str) -> tuple[bool, str]:
+def _local_vision_health(
+    base_url: str | None,
+    model: str,
+    api_key: str | None,
+) -> tuple[bool, str]:
     if not base_url:
         return False, "waiting-for-local-base-url"
+    if not _is_loopback_url(base_url):
+        if base_url.startswith("https://") and api_key:
+            return True, "external-openai-compatible-ready"
+        if base_url.startswith("https://"):
+            return True, "external-openai-compatible-no-key"
+        return True, "external-openai-compatible-unverified"
     try:
         with httpx.Client(timeout=2) as client:
             response = client.get(f"{base_url.rstrip('/')}/models")
@@ -650,6 +664,16 @@ def _local_vision_health(base_url: str | None, model: str) -> tuple[bool, str]:
     if normalized_model not in normalized_available:
         return False, f"missing-lmstudio-model:{model}"
     return True, "ready"
+
+
+def _is_loopback_url(value: str) -> bool:
+    normalized = value.lower().strip()
+    return (
+        "://127.0.0.1" in normalized
+        or "://localhost" in normalized
+        or "://host.docker.internal" in normalized
+        or "://local-vision.test" in normalized
+    )
 
 
 def _normalize_model_name(value: str) -> str:

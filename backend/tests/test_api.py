@@ -419,6 +419,25 @@ def test_model_gateway_localvision_health_uses_lmstudio_model_list(monkeypatch: 
     assert local["health"] == "ready"
 
 
+def test_model_gateway_localvision_accepts_external_openai_compatible_endpoint(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("VISION_PROVIDER", "LocalVision")
+    monkeypatch.setenv("SMARTPOLICE_ENABLE_LOCAL_VLM", "1")
+    monkeypatch.setenv("LOCAL_VISION_BASE_URL", "https://api.v3.cm/v1")
+    monkeypatch.setenv("LOCAL_VISION_MODEL", "qwen3-vl-plus")
+    monkeypatch.setenv("LOCAL_VISION_API_KEY", "test-key")
+
+    response = client.get("/agent/model-gateway/status")
+
+    assert response.status_code == 200
+    local = next(item for item in response.json()["providers"] if item["provider"] == "LocalVision")
+    assert local["configured"] is True
+    assert local["base_url"] == "https://api.v3.cm/v1"
+    assert local["default_models"]["视觉证据分析"] == "qwen3-vl-plus"
+    assert local["health"] == "external-openai-compatible-ready"
+
+
 def test_model_gateway_dry_run_builds_payload() -> None:
     response = client.post(
         "/agent/model-gateway/invoke",
