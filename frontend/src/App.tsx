@@ -77,6 +77,7 @@ const PRIMARY_DEMO_CASE_ID = "demo-doubao-collapse-disaster-001";
 const VISIBLE_DEMO_CASE_IDS = new Set([
   PRIMARY_DEMO_CASE_ID,
   "demo-gptimage-station-police-conflict-001",
+  "demo-real-beijing-road-street-001",
 ]);
 
 export function App() {
