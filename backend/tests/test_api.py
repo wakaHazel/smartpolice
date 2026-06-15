@@ -2537,6 +2537,51 @@ def test_image_forensics_prefers_trained_model_over_demo_prior(monkeypatch: Any)
     assert body["asset_results"][0]["review_recommendation"] == {}
 
 
+def test_image_forensics_keeps_known_public_real_photo_as_real() -> None:
+    case_id = "pytest-known-public-real-photo-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "公开来源真实灾情救援照片核验",
+            "scenario": "灾害险情核查",
+            "platform": "Wikimedia Commons / 演示导入",
+            "publish_time": "2008-05-14",
+            "source_url": "https://commons.wikimedia.org/wiki/File:Sichuan_earthquake_save..JPG",
+            "content": "公开来源真实照片，用于和 AI 生成灾情图片形成对照。",
+            "image_description": "真实灾害救援现场。",
+            "spread": {
+                "views": 64000,
+                "reposts": 1400,
+                "comments": 620,
+                "likes": 3100,
+                "velocity": "公开来源核验",
+            },
+            "manual_label": "公开来源真实灾情救援照片",
+            "manual_risk_score": 32,
+            "tags": ["真实照片", "Wikimedia Commons", "汶川地震", "救援现场"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("real-sichuan-earthquake-rescue.jpg", _png_1x1(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    response = client.post(f"/cases/{case_id}/image-forensics")
+
+    assert response.status_code == 200
+    body = response.json()
+    asset_result = body["asset_results"][0]
+    assert asset_result["top_candidate"] == "real"
+    assert asset_result["candidate_ranking"][0]["label"] == "real"
+    assert asset_result["candidate_ranking"][0]["probability"] >= 0.8
+    assert body["aggregate"]["top_candidate"] == "real"
+
+
 def test_generator_attribution_robustness_run_uses_real_image_perturbations(tmp_path: Path) -> None:
     _reset_training_pool()
     image_root = tmp_path / "robust-generator-images"

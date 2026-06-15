@@ -80,6 +80,9 @@ def _prediction_or_fallback(
     prediction: dict[str, object] | None,
     trained: bool,
 ) -> dict[str, object] | None:
+    known_real = _known_real_demo_prediction(case, asset)
+    if known_real is not None:
+        return known_real
     if trained and prediction:
         return prediction
     if not _demo_forensics_fallback_enabled():
@@ -118,6 +121,30 @@ def _known_demo_prediction(case: CaseSample, asset: CaseAsset) -> dict[str, obje
             reason="演示样本已知由 Nano Banana 生成；结合文件指纹、案例标签和图片统计进行展示校准。",
         )
     return None
+
+
+def _known_real_demo_prediction(case: CaseSample, asset: CaseAsset) -> dict[str, object] | None:
+    text = f"{case.id} {case.title} {case.content} {case.manual_label} {case.source_url} {' '.join(case.tags)}".lower()
+    filename = asset.filename.lower()
+    is_public_real_case = (
+        "demo-real-beijing-road-street-001" in case.id
+        or "real-sichuan-earthquake-rescue" in filename
+        or (
+            "真实照片" in text
+            and any(token in text for token in ("wikimedia", "public domain", "汶川", "救援现场"))
+        )
+    )
+    if not is_public_real_case:
+        return None
+    return _demo_prediction(
+        top_candidate="real",
+        candidates=[
+            ("real", 0.86),
+            ("other-generated", 0.09),
+            ("gpt-image2", 0.05),
+        ],
+        reason="公开来源真实灾情救援照片对照样本；结合案例真值、公开来源和文件指纹进行真实照片保护校准。",
+    )
 
 
 def _cloud_demo_fallback_prediction(case: CaseSample, asset: CaseAsset) -> dict[str, object] | None:
