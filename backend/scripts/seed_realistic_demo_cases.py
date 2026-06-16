@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+import shutil
+import sqlite3
 import sys
 
 from PIL import Image
@@ -137,6 +139,7 @@ REJECTED_DEMO_IDS = [
 def main() -> None:
     initialize_database()
     _remove_rejected_demo_cases()
+    _clear_case_evidence(REAL_DISASTER_RESCUE_CASE_ID)
     for demo_case in DEMO_CASES:
         save_case_sample(demo_case)
     for case_id, image_path, filename, content_type in _copy_demo_images():
@@ -151,6 +154,47 @@ def _remove_rejected_demo_cases() -> None:
         except KeyError:
             continue
         delete_case_sample(case_id)
+
+
+def _clear_case_evidence(case_id: str) -> None:
+    with sqlite3.connect(DB_PATH) as connection:
+        connection.execute(
+            """
+            DELETE FROM knowledge_documents
+            WHERE id IN (
+                SELECT 'snapshot-' || id FROM web_snapshots WHERE case_id = ?
+            )
+            """,
+            (case_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM knowledge_documents
+            WHERE id IN (
+                SELECT 'evidence-' || id FROM evidence_items WHERE case_id = ?
+            )
+            """,
+            (case_id,),
+        )
+        for table in (
+            "agent_runs",
+            "llm_invocations",
+            "case_assets",
+            "image_forensics_runs",
+            "real_analysis_runs",
+            "web_snapshots",
+            "evidence_items",
+        ):
+            try:
+                connection.execute(f"DELETE FROM {table} WHERE case_id = ?", (case_id,))
+            except sqlite3.OperationalError:
+                continue
+        connection.commit()
+    for root in (UPLOAD_ROOT / case_id, ROOT / "backend" / "data" / "snapshots" / case_id):
+        resolved = root.resolve()
+        data_root = (ROOT / "backend" / "data").resolve()
+        if root.exists() and str(resolved).startswith(str(data_root)):
+            shutil.rmtree(root)
 
 
 def _copy_demo_images() -> list[tuple[str, Path, str, str]]:

@@ -156,7 +156,10 @@ export function App() {
         ]);
         setAnalysis(result);
         setEvidenceBundle(bundle);
-        if (cachedRealAnalysis) {
+        if (!bundle.assets.length) {
+          clearCachedRealAnalysis(caseId);
+          setRealAnalysis(null);
+        } else if (cachedRealAnalysis) {
           writeCachedRealAnalysis(cachedRealAnalysis);
           setRealAnalysis(cachedRealAnalysis);
         } else if (!locallyCachedRealAnalysis) {
