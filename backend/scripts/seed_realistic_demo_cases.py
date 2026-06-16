@@ -169,13 +169,6 @@ def _copy_demo_images() -> list[tuple[str, Path, str, str]]:
             "image/jpeg",
             False,
         ),
-        (
-            REAL_DISASTER_RESCUE_CASE_ID,
-            DEMO_ASSET_DIR / "real-sichuan-earthquake-rescue.jpg",
-            "real-sichuan-earthquake-rescue.jpg",
-            "image/jpeg",
-            True,
-        ),
     ]
     copied: list[tuple[str, Path, str, str]] = []
     for case_id, source, filename, content_type, preserve_original in specs:
