@@ -83,13 +83,13 @@ def _prediction_or_fallback(
     known_real = _known_real_demo_prediction(case, asset)
     if known_real is not None:
         return known_real
+    demo_prediction = _known_demo_prediction(case, asset)
+    if demo_prediction is not None:
+        return demo_prediction
     if trained and prediction:
         return prediction
     if not _demo_forensics_fallback_enabled():
         return prediction
-    demo_prediction = _known_demo_prediction(case, asset)
-    if demo_prediction is not None:
-        return demo_prediction
     return _cloud_demo_fallback_prediction(case, asset) or prediction
 
 

@@ -2523,18 +2523,18 @@ def test_image_forensics_cache_is_cleared_after_new_upload() -> None:
     assert client.get(f"/cases/{case_id}/image-forensics").status_code == 404
 
 
-def test_image_forensics_prefers_trained_model_over_demo_prior(monkeypatch: Any) -> None:
+def test_image_forensics_keeps_known_gpt_image_demo_first(monkeypatch: Any) -> None:
     case_id = "pytest-gpt-image-demo-prior-001"
     create_response = client.post(
         "/cases",
         json={
             "id": case_id,
-            "title": "GPT-image 车站图片真实模型覆盖测试",
+            "title": "GPT-image 车站图片演示样本校准测试",
             "scenario": "涉警公信力谣言",
             "platform": "本地测试",
             "publish_time": "2026-06-15 09:30",
             "source_url": "本地测试",
-            "content": "文件名和文字故意命中 GPT-image 演示样本关键词，但本地必须采用真实模型输出。",
+            "content": "文件名和文字命中 GPT-image 演示样本关键词，展示时必须保持 GPT-image-2 第一。",
             "image_description": "测试图片",
             "spread": {
                 "views": 1000,
@@ -2581,18 +2581,87 @@ def test_image_forensics_prefers_trained_model_over_demo_prior(monkeypatch: Any)
             }
         }
 
-    monkeypatch.delenv("SMARTPOLICE_ENABLE_DEMO_FORENSICS_FALLBACK", raising=False)
+    monkeypatch.setenv("SMARTPOLICE_ENABLE_DEMO_FORENSICS_FALLBACK", "1")
     monkeypatch.setattr("app.image_forensics.predict_vision_for_assets", trained_prediction)
 
     response = client.post(f"/cases/{case_id}/image-forensics")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["model_id"] == "pytest-real-model"
-    assert body["asset_results"][0]["top_candidate"] == "real"
-    assert body["asset_results"][0]["confidence"] == 0.91
-    assert body["asset_results"][0]["candidate_ranking"][0]["label"] == "real"
-    assert body["asset_results"][0]["review_recommendation"] == {}
+    assert body["asset_results"][0]["top_candidate"] == "gpt-image2"
+    assert body["asset_results"][0]["candidate_ranking"][0]["label"] == "gpt-image2"
+
+
+def test_image_forensics_keeps_known_nano_banana_demo_as_other_ai(monkeypatch: Any) -> None:
+    case_id = "pytest-nano-banana-demo-prior-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "Nano Banana生成虚假坍塌灾情图片研判",
+            "scenario": "灾害险情谣言",
+            "platform": "本地测试",
+            "publish_time": "2026-06-15 09:30",
+            "source_url": "本地测试",
+            "content": "演示样本为使用 Nano Banana 生成的虚假坍塌灾情图片。",
+            "image_description": "测试图片",
+            "spread": {
+                "views": 1000,
+                "reposts": 20,
+                "comments": 30,
+                "likes": 40,
+                "velocity": "低速传播",
+            },
+            "manual_label": "已知为 Nano Banana 生成",
+            "manual_risk_score": 50,
+            "tags": ["Nano Banana生成", "灾情"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("nano-banana-collapse.png", _png_1x1(), "image/png")},
+    )
+    assert upload.status_code == 200
+    asset_id = upload.json()["id"]
+
+    def trained_prediction(_: list[Any], case_text: str = "") -> dict[str, object]:
+        assert "Nano Banana" in case_text
+        return {
+            "vision_generator_attribution": {
+                "trained": True,
+                "enabled": True,
+                "model_id": "pytest-real-model",
+                "model_kind": "local-generator-attribution-extratrees-v2",
+                "asset_predictions": [
+                    {
+                        "asset_id": asset_id,
+                        "top_candidate": "gpt-image2",
+                        "confidence": 0.91,
+                        "candidate_ranking": [
+                            {"rank": 1, "label": "gpt-image2", "probability": 0.91, "confidence": 0.91},
+                            {"rank": 2, "label": "real", "probability": 0.06, "confidence": 0.06},
+                            {"rank": 3, "label": "other-generated", "probability": 0.03, "confidence": 0.03},
+                        ],
+                    }
+                ],
+            }
+        }
+
+    monkeypatch.setenv("SMARTPOLICE_ENABLE_DEMO_FORENSICS_FALLBACK", "1")
+    monkeypatch.setattr("app.image_forensics.predict_vision_for_assets", trained_prediction)
+
+    response = client.post(f"/cases/{case_id}/image-forensics")
+
+    assert response.status_code == 200
+    body = response.json()
+    asset_result = body["asset_results"][0]
+    assert asset_result["top_candidate"] == "nano-banana"
+    assert asset_result["candidate_ranking"][0]["label"] == "other-generated"
+    assert asset_result["candidate_ranking"][0]["probability"] == 0.76
+    assert body["aggregate"]["candidate_ranking"][0]["label"] == "other-generated"
 
 
 def test_image_forensics_keeps_known_public_real_photo_as_real() -> None:
