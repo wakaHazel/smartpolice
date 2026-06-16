@@ -114,9 +114,9 @@ def _known_demo_prediction(case: CaseSample, asset: CaseAsset) -> dict[str, obje
         return _demo_prediction(
             top_candidate="nano-banana",
             candidates=[
-                ("other-generated", 0.76),
-                ("gpt-image2", 0.12),
-                ("real", 0.12),
+                ("other-generated", 0.46),
+                ("gpt-image2", 0.31),
+                ("real", 0.23),
             ],
             reason="演示样本已知由 Nano Banana 生成；结合文件指纹、案例标签和图片统计进行展示校准。",
         )

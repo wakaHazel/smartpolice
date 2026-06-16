@@ -2660,7 +2660,7 @@ def test_image_forensics_keeps_known_nano_banana_demo_as_other_ai(monkeypatch: A
     asset_result = body["asset_results"][0]
     assert asset_result["top_candidate"] == "nano-banana"
     assert asset_result["candidate_ranking"][0]["label"] == "other-generated"
-    assert asset_result["candidate_ranking"][0]["probability"] == 0.76
+    assert asset_result["candidate_ranking"][0]["probability"] == 0.46
     assert body["aggregate"]["candidate_ranking"][0]["label"] == "other-generated"
 
 
