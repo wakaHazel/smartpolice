@@ -110,15 +110,16 @@ TAMPER_DEMO_CASES: list[CaseSample] = [
     CaseSample(
         id="tamper-demo-order-after-sale-001",
         title="AI 篡改订单/售后凭证研判",
-        scenario="电商售后凭证局部篡改风险",
-        platform="本地演示样例",
+        scenario="单据/售后凭证字段局部改写候选线索",
+        platform="HF SROIE 单据篡改训练池样本",
         publish_time="2026-06-18 09:00",
-        source_url="内置脱敏 demo 样例",
+        source_url="HF document-tamper pool: rth/sroie-2019-v2 / SROIE receipt source",
         content=(
-            "演示样例：商品订单截图与售后凭证疑似被局部改写，用于恶意退款或投诉。"
+            "演示样本来自公开 SROIE 收据原图，并在本地生成金额/日期/状态字段覆盖篡改变体，"
+            "用于展示订单或售后凭证类材料的局部改写候选线索。"
         ),
         image_description=(
-            "订单状态、退款金额和商品瑕疵说明区域为候选复核重点，样例图片不包含真实个人信息。"
+            "真实收据/凭证图像上的字段覆盖篡改变体，不使用生成式中文模板图。"
         ),
         spread=SpreadMetrics(
             views=1200,
@@ -127,22 +128,23 @@ TAMPER_DEMO_CASES: list[CaseSample] = [
             likes=60,
             velocity="演示样例，不代表真实传播",
         ),
-        manual_label="AI 篡改取证 demo：订单/售后凭证候选线索",
-        tags=["AI篡改取证", "订单", "售后凭证", "demo"],
-        sensitivity_notes="内置脱敏演示图，不包含真实身份、订单号或联系方式。",
+        manual_label="AI 篡改取证 demo：SROIE 单据源图字段覆盖篡改样本",
+        tags=["AI篡改取证", "SROIE", "单据凭证", "demo"],
+        sensitivity_notes="图片来自公开单据数据集的本地篡改变体，不包含真实个人身份信息；仅输出候选线索。",
     ),
     CaseSample(
         id="tamper-demo-bank-transfer-001",
         title="AI 篡改银行回单/转账凭证研判",
-        scenario="转账回单关键字段局部改写风险",
-        platform="本地演示样例",
+        scenario="转账凭证金额/日期/状态字段局部改写候选线索",
+        platform="HF SROIE 单据篡改训练池样本",
         publish_time="2026-06-18 09:05",
-        source_url="内置脱敏 demo 样例",
+        source_url="HF document-tamper pool: rth/sroie-2019-v2 / SROIE receipt source",
         content=(
-            "演示样例：金额、日期、收款方或交易状态字段疑似被局部覆盖或重绘。"
+            "演示样本来自公开 SROIE 收据原图，并在本地生成金额、日期或交易状态字段覆盖篡改变体，"
+            "用于类比银行回单/转账凭证关键字段改写风险。"
         ),
         image_description=(
-            "金额、日期、交易状态和收款方字段为候选异常区域，需与银行流水人工核验。"
+            "真实收据/凭证图像上的字段覆盖篡改变体，不使用生成式中文模板图。"
         ),
         spread=SpreadMetrics(
             views=980,
@@ -151,22 +153,23 @@ TAMPER_DEMO_CASES: list[CaseSample] = [
             likes=35,
             velocity="演示样例，不代表真实传播",
         ),
-        manual_label="AI 篡改取证 demo：银行回单关键字段候选线索",
-        tags=["AI篡改取证", "银行回单", "转账凭证", "demo"],
-        sensitivity_notes="内置脱敏演示图，不包含真实银行账号、姓名或交易流水。",
+        manual_label="AI 篡改取证 demo：SROIE 单据源图字段覆盖篡改样本",
+        tags=["AI篡改取证", "SROIE", "转账凭证", "demo"],
+        sensitivity_notes="图片来自公开单据数据集的本地篡改变体，不包含真实个人身份信息；仅输出候选线索。",
     ),
     CaseSample(
         id="tamper-demo-medical-complaint-001",
         title="AI 篡改医疗/餐饮投诉材料研判",
-        scenario="投诉材料票据和现场图局部篡改风险",
-        platform="本地演示样例",
+        scenario="投诉材料票据字段局部改写候选线索",
+        platform="HF SROIE 单据篡改训练池样本",
         publish_time="2026-06-18 09:10",
-        source_url="内置脱敏 demo 样例",
+        source_url="HF document-tamper pool: rth/sroie-2019-v2 / SROIE receipt source",
         content=(
-            "演示样例：收费票据、诊断/投诉说明或餐饮现场图片疑似被局部改写，用于索赔。"
+            "演示样本来自公开 SROIE 收据原图，并在本地生成金额、日期或状态字段覆盖篡改变体，"
+            "用于类比医疗收费、餐饮消费和投诉材料附件中的局部改写风险。"
         ),
         image_description=(
-            "票据字段、投诉说明和现场局部纹理为候选复核重点，输出仅作为辅助研判。"
+            "真实收据/凭证图像上的字段覆盖篡改变体，不使用生成式中文模板图。"
         ),
         spread=SpreadMetrics(
             views=1500,
@@ -175,9 +178,9 @@ TAMPER_DEMO_CASES: list[CaseSample] = [
             likes=72,
             velocity="演示样例，不代表真实传播",
         ),
-        manual_label="AI 篡改取证 demo：医疗/餐饮投诉材料候选线索",
-        tags=["AI篡改取证", "医疗", "餐饮投诉", "demo"],
-        sensitivity_notes="内置脱敏演示图，不包含真实患者、商户或支付信息。",
+        manual_label="AI 篡改取证 demo：SROIE 单据源图字段覆盖篡改样本",
+        tags=["AI篡改取证", "SROIE", "投诉材料", "demo"],
+        sensitivity_notes="图片来自公开单据数据集的本地篡改变体，不包含真实个人身份信息；仅输出候选线索。",
     ),
 ]
 

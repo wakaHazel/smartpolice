@@ -13,7 +13,7 @@ from app.models import (
 from app.multimodal_training import predict_vision_for_assets
 
 
-GPT_IMAGE2_TARGET = "GPT-image-2 社交平台传播扰动后视觉检测"
+GPT_IMAGE2_TARGET = "三分类生成图研判"
 
 
 def run_image_forensics(case: CaseSample, assets: list[CaseAsset]) -> ImageForensicsResult:
@@ -46,7 +46,7 @@ def run_image_forensics(case: CaseSample, assets: list[CaseAsset]) -> ImageForen
     }
     next_steps = [
         "优先保留原始上传文件、网页快照和 sha256，避免只保存聊天截图。",
-        "若 GPT-image-2 概率较高，继续核验 C2PA、水印、平台发布记录和账号传播链。",
+        "若 AI 生成图概率较高，继续核验 C2PA、水印、平台发布记录和账号传播链。",
         "对截图重保存、强压缩或水印覆盖样本，降低单图结论权重，补采原图或平台侧证据。",
         "公共安全谣言场景下，将该图像取证结论作为风险研判的证据项，而不是直接作为最终定性。",
     ]
@@ -80,14 +80,14 @@ def _prediction_or_fallback(
     prediction: dict[str, object] | None,
     trained: bool,
 ) -> dict[str, object] | None:
+    if trained and prediction:
+        return prediction
     known_real = _known_real_demo_prediction(case, asset)
     if known_real is not None:
         return known_real
     demo_prediction = _known_demo_prediction(case, asset)
     if demo_prediction is not None:
         return demo_prediction
-    if trained and prediction:
-        return prediction
     if not _demo_forensics_fallback_enabled():
         return prediction
     return _cloud_demo_fallback_prediction(case, asset) or prediction
@@ -256,6 +256,9 @@ def _asset_result(
         candidate_distribution=candidate_distribution,
         candidate_ranking=candidate_ranking,
         review_recommendation=review_recommendation,
+        real_photo_guard=_dict_value(prediction.get("real_photo_guard")),
+        binary_gate=_dict_value(prediction.get("binary_gate")),
+        gate_reason=_string_or_none(prediction.get("gate_reason") or prediction.get("binary_gate_reason")),
         disturbances=disturbances,
         feature_summary=features,
         top_contributions=_top_contributions(prediction),
@@ -356,7 +359,15 @@ def _candidate_distribution(prediction: dict[str, object]) -> list[dict[str, obj
         label = str(item.get("label") or item.get("candidate") or "unknown")
         confidence = _float_value(item.get("confidence"))
         probability = _float_value(item.get("probability")) if "probability" in item else confidence
-        candidates.append({"label": label, "confidence": confidence, "probability": probability})
+        candidates.append(
+            {
+                "label": label,
+                "display_name": _display_source_label(label),
+                "confidence": confidence,
+                "probability": probability,
+                "confidence_percent": round(probability * 100),
+            }
+        )
     return sorted(candidates, key=lambda item: float(item.get("probability", item["confidence"])), reverse=True)[:8]
 
 
@@ -368,6 +379,17 @@ def _review_recommendation(prediction: dict[str, object]) -> dict[str, object]:
     if isinstance(gate, dict) and isinstance(gate.get("review_recommendation"), dict):
         return dict(gate["review_recommendation"])
     return {}
+
+
+def _dict_value(value: object) -> dict[str, object]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _string_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _candidate_ranking(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -413,20 +435,20 @@ def _aggregate_candidate_ranking(results: list[ImageForensicsAssetResult]) -> li
 def _display_source_label(label: str) -> str:
     normalized = label.strip().lower().replace("_", "-")
     labels = {
-        "gpt-image2": "GPT-image-2",
-        "gpt-image-2": "GPT-image-2",
-        "gpt image2": "GPT-image-2",
-        "gpt-image1": "GPT-image-1",
-        "gpt-image1.5": "GPT-image-1.5",
-        "stable-diffusion": "Stable Diffusion",
-        "midjourney": "Midjourney",
-        "nano-banana": "Nano Banana",
-        "seedream-4": "Seedream-4",
-        "flux": "Flux",
-        "other-generated": "其他生成模型",
+        "gpt-image2": "GPT-image2",
+        "gpt-image-2": "GPT-image2",
+        "gpt image2": "GPT-image2",
+        "gpt-image1": "其他 AI 生成图",
+        "gpt-image1.5": "其他 AI 生成图",
+        "stable-diffusion": "其他 AI 生成图",
+        "midjourney": "其他 AI 生成图",
+        "nano-banana": "其他 AI 生成图",
+        "seedream-4": "其他 AI 生成图",
+        "flux": "其他 AI 生成图",
+        "other-generated": "其他 AI 生成图",
         "real": "真实照片",
         "unknown": "未知/低置信",
-        "not-gpt-image2": "非 GPT-image-2",
+        "not-gpt-image2": "未知/低置信",
     }
     return labels.get(normalized, label or "待分析")
 
@@ -439,7 +461,8 @@ def _gpt_image2_probability(
     for item in candidates:
         label = str(item.get("label") or "").lower()
         if label in {"gpt-image2", "gpt-image-2", "gpt image2"}:
-            return round(_float_value(item.get("confidence")), 3)
+            value = item.get("probability") if "probability" in item else item.get("confidence")
+            return round(_float_value(value), 3)
     if top_candidate == "gpt-image2":
         return round(confidence, 3)
     return None if top_candidate == "unknown" and confidence == 0 else 0.0
@@ -460,10 +483,11 @@ def _interpretation(
     trained: bool,
 ) -> list[str]:
     lines: list[str] = []
+    display_label = _display_source_label(top_candidate)
     if gpt_probability is not None and gpt_probability >= 0.65:
-        lines.append(f"GPT-image-2 来源线索较强，候选概率约 {round(gpt_probability * 100)}%。")
+        lines.append(f"GPT-image2 来源线索较强，候选概率约 {round(gpt_probability * 100)}%。")
     elif top_candidate != "unknown":
-        lines.append(f"当前最高候选为 {top_candidate}，置信度约 {round(confidence * 100)}%。")
+        lines.append(f"当前最高候选为 {display_label}，置信度约 {round(confidence * 100)}%。")
     else:
         lines.append("模型未给出稳定来源候选，建议补采原图或平台侧证据。")
     if any(item.severity in {"medium", "high"} for item in disturbances):

@@ -733,7 +733,7 @@ export function App() {
                 <ModuleTitle
                   icon={<Gauge size={18} />}
                   title="分析结果"
-                  subtitle="结论 · 生成线索 · 下一步"
+                  subtitle="三分类生成图研判 · 下一步"
                 />
                 <ImageForensicsPanel result={currentImageForensics} />
               </section>
@@ -1069,7 +1069,7 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
     return (
       <EmptyFormalState
         title="等待图片分析"
-        body="先上传图片，再点击“分析这张图”。这里会显示是否疑似 AI 生成、来源候选、传播痕迹和下一步核查建议。"
+        body="先上传图片，再点击“分析这张图”。这里会显示三分类来源候选、置信度和下一步核查建议。"
       />
     );
   }
@@ -1084,6 +1084,7 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
   const topSource = groupedRows[0];
   const verdictTitle = primaryForensicsVerdict(asset.top_candidate);
   const verdictSubtitle = forensicsVerdictSubtitle(topSource, displaySources);
+  const modelHints = compactGeneratorModelHints(asset);
   const nextSteps = compactForensicsNextSteps(verdictTitle, generatedSignal);
   return (
     <div className="forensics-board">
@@ -1107,7 +1108,7 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
         ))}
       </div>
       <div className="next-step-list">
-        {nextSteps.map((item) => <span key={item}>{item}</span>)}
+        {[...modelHints, ...nextSteps].map((item) => <span key={item}>{item}</span>)}
       </div>
     </div>
   );
@@ -1479,21 +1480,21 @@ function tamperCueLabel(value: string): string {
 function sourceLabel(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/_/g, "-");
   const labels: Record<string, string> = {
-    "gpt-image2": "疑似AI生成图",
-    "gpt-image-2": "疑似AI生成图",
-    "gpt image2": "疑似AI生成图",
-    "gpt-image1": "疑似AI生成图",
-    "gpt-image1.5": "疑似AI生成图",
-    "stable-diffusion": "疑似AI生成图",
-    "midjourney": "疑似AI生成图",
-    "nano-banana": "疑似AI生成图",
-    "seedream-4": "疑似AI生成图",
-    "dall-e": "疑似AI生成图",
-    "dall-e-3": "疑似AI生成图",
-    "flux": "疑似AI生成图",
+    "gpt-image2": "GPT-image2",
+    "gpt-image-2": "GPT-image2",
+    "gpt image2": "GPT-image2",
+    "gpt-image1": "其他 AI 生成图",
+    "gpt-image1.5": "其他 AI 生成图",
+    "stable-diffusion": "其他 AI 生成图",
+    "midjourney": "其他 AI 生成图",
+    "nano-banana": "其他 AI 生成图",
+    "seedream-4": "其他 AI 生成图",
+    "dall-e": "其他 AI 生成图",
+    "dall-e-3": "其他 AI 生成图",
+    "flux": "其他 AI 生成图",
     "real": "真实照片",
-    "other-generated": "疑似AI生成图",
-    "not-gpt-image2": "暂不支持判定为该类生成图",
+    "other-generated": "其他 AI 生成图",
+    "not-gpt-image2": "未知/低置信",
     "unknown": "未知/低置信",
   };
   return labels[normalized] ?? (value ? value : "待分析");
@@ -1502,13 +1503,13 @@ function sourceLabel(value: string): string {
 function primaryForensicsVerdict(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/_/g, "-");
   if (!normalized || normalized === "unknown") {
-    return "未知来源";
+    return "未知/低置信";
   }
   if (normalized === "real") {
     return "真实照片";
   }
   if (normalized === "not-gpt-image2") {
-    return "非该类生成图";
+    return "未知/低置信";
   }
   return "AI生成图";
 }
@@ -1568,8 +1569,8 @@ function groupedSourceRows(
 ): Array<{ confidence: number; label: string; name: string }> {
   const topGroupName = visibleSourceGroupName(topCandidate ?? "");
   const sorted = [
-    { name: "GPT-image-2", confidence: grouped.gptImage2 },
-    { name: "其他AI模型", confidence: grouped.otherAi },
+    { name: "GPT-image2", confidence: grouped.gptImage2 },
+    { name: "其他 AI 生成图", confidence: grouped.otherAi },
     { name: "真实照片", confidence: grouped.real },
   ].sort((left, right) => right.confidence - left.confidence);
   if (topGroupName) {
@@ -1585,7 +1586,7 @@ function groupedSourceRows(
 function visibleSourceGroupName(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/_/g, "-");
   if (["gpt-image2", "gpt-image-2", "gpt image2"].includes(normalized)) {
-    return "GPT-image-2";
+    return "GPT-image2";
   }
   if (["real", "real-photo"].includes(normalized)) {
     return "真实照片";
@@ -1593,7 +1594,7 @@ function visibleSourceGroupName(value: string): string {
   if (!normalized || ["unknown", "not-gpt-image2"].includes(normalized)) {
     return "";
   }
-  return "其他AI模型";
+  return "其他 AI 生成图";
 }
 
 function forensicsVerdictSubtitle(
@@ -1603,7 +1604,7 @@ function forensicsVerdictSubtitle(
   if (!topSource) {
     return "等待来源类别概率";
   }
-  const contrastName = topSource.name === "真实照片" ? "GPT-image-2" : "真实照片";
+  const contrastName = topSource.name === "真实照片" ? "GPT-image2" : "真实照片";
   const contrastValue = topSource.name === "真实照片" ? grouped.gptImage2 : grouped.real;
   return `最高类别 ${topSource.name} ${Math.round(topSource.confidence * 100)}% · ${contrastName} ${Math.round(contrastValue * 100)}%`;
 }
@@ -1619,6 +1620,24 @@ function compactForensicsNextSteps(verdictTitle: string, generatedSignal: number
     "联系平台调取首发记录、编辑记录和传播链，确认是否被二次转发或压缩。",
     "对外通报前结合现场、权威部门和平台证据复核，不单独依赖单图结论。",
   ];
+}
+
+function compactGeneratorModelHints(asset: ImageForensicsResult["asset_results"][number]): string[] {
+  const hints: string[] = [];
+  const realPhotoGuard = asRecord(asset.real_photo_guard) ?? {};
+  const binaryGate = asRecord(asset.binary_gate) ?? {};
+  const guardScore = numberValue(realPhotoGuard.score);
+  if (guardScore !== null) {
+    hints.push(`真实照片保护线索：${Math.round(guardScore * 100)}%，仅作辅助研判。`);
+  }
+  const generatedProbability = numberValue(binaryGate.generated_probability);
+  const realProbability = numberValue(binaryGate.real_probability);
+  if (generatedProbability !== null || realProbability !== null) {
+    const generatedText = generatedProbability === null ? "待核验" : `${Math.round(generatedProbability * 100)}%`;
+    const realText = realProbability === null ? "待核验" : `${Math.round(realProbability * 100)}%`;
+    hints.push(`Generated-vs-real gate：生成 ${generatedText} · 真实 ${realText}。`);
+  }
+  return hints.slice(0, 2);
 }
 
 function compactTamperNextSteps(

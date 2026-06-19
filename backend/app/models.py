@@ -410,6 +410,9 @@ class ImageForensicsAssetResult(BaseModel):
     candidate_distribution: list[dict[str, object]]
     candidate_ranking: list[dict[str, object]] = Field(default_factory=list)
     review_recommendation: dict[str, object] = Field(default_factory=dict)
+    real_photo_guard: dict[str, object] = Field(default_factory=dict)
+    binary_gate: dict[str, object] = Field(default_factory=dict)
+    gate_reason: str | None = None
     disturbances: list[PropagationDisturbanceFinding]
     feature_summary: dict[str, object]
     top_contributions: list[dict[str, object]]

@@ -112,6 +112,10 @@ CLIP_ENABLED = os.getenv("SMARTPOLICE_ENABLE_CLIP", "").lower() in {"1", "true",
 CLIP_EXTRACTOR_VERSION = f"local-clip-image-text-v1:{CLIP_MODEL_NAME}:{CLIP_FEATURE_DIMS}"
 GENERATOR_TREE_ESTIMATORS = int(os.getenv("SMARTPOLICE_GENERATOR_TREE_ESTIMATORS", "360"))
 GENERATOR_TREE_MIN_SAMPLES_LEAF = int(os.getenv("SMARTPOLICE_GENERATOR_TREE_MIN_SAMPLES_LEAF", "2"))
+ADVANCED_TREE_ESTIMATORS = int(os.getenv("SMARTPOLICE_ADVANCED_TREE_ESTIMATORS", "220"))
+ADVANCED_TREE_MIN_SAMPLES = int(os.getenv("SMARTPOLICE_ADVANCED_TREE_MIN_SAMPLES", "12"))
+GENERATOR_REAL_CLASS_WEIGHT = float(os.getenv("SMARTPOLICE_GENERATOR_REAL_CLASS_WEIGHT", "1.35"))
+GENERATOR_REAL_HARD_NEGATIVE_WEIGHT = float(os.getenv("SMARTPOLICE_GENERATOR_REAL_HARD_NEGATIVE_WEIGHT", "1.6"))
 GENERATOR_AUGMENTATION_EXTRACTOR_VERSION = f"{EXTRACTOR_VERSION}:generator-augmentation-v2-platform-like"
 GENERATOR_BINARY_GATE_THRESHOLD = float(os.getenv("SMARTPOLICE_GENERATOR_BINARY_GATE_THRESHOLD", "0.56"))
 GENERATOR_REAL_PROTECTION_MARGIN = float(os.getenv("SMARTPOLICE_GENERATOR_REAL_PROTECTION_MARGIN", "0.08"))
@@ -134,12 +138,12 @@ MAINSTREAM_FIVE_GENERATOR_LABELS = (
 GENERATOR_PROFILE_POLICIES: dict[str, dict[str, object]] = {
     "standard_attribution": {
         "profile": "standard_attribution",
-        "chinese_name": "标准多生成器归因",
-        "objective": "保留当前通用归因基线，作为 active 与分轨 candidate 的对照组。",
-        "model_strategy": "多分类生成器归因；适合做历史基线，不再承载所有泛化目标。",
+        "chinese_name": "标准三分类生成图研判",
+        "objective": "识别 GPT-image2、其他 AI 生成图和真实照片三类，作为 active 主线。",
+        "model_strategy": "三分类生成图研判：gpt-image2 / other-generated / real；unknown 只作为低置信预测退让，不作为训练主类。",
         "feature_strategy": "图片统计、压缩残差、频域/纹理、文字覆盖代理、清洗后的视觉语义上下文，可选 CLIP 语义特征。",
-        "label_strategy": "保持原始生成器标签；低置信仍由 unknown 阈值兜底。",
-        "system_role": "默认归因头和历史参照，不把单次高分写成跨来源泛化能力。",
+        "label_strategy": "GPT-image2 保留为独立类；真实照片保留为 real；其他生成模型和未细分生成来源合并为 other-generated。",
+        "system_role": "默认生成图检测/归因头，只输出 GPT-image2、其他 AI 生成图、真实照片与低置信 unknown 线索。",
         "activation_policy": "仅 standard_attribution 可按 activation_mode 走原有 active 生命周期。",
         "activation_eligibility": "standard_lifecycle",
         "candidate_only": False,
@@ -607,6 +611,11 @@ def get_vision_competition_summary(
     ]
 
     model_card = active.model_card if active else {}
+    active_sample_count = int(active.sample_count) if active else 0
+    active_label_distribution = dict(active.label_distribution) if active else {}
+    training_pool_sample_count = max(status.data.sample_count, active_sample_count)
+    training_pool_image_count = max(status.data.image_available_count, active_sample_count)
+    training_pool_labels = status.data.label_distribution or active_label_distribution
     validation_metrics = _run_validation_summary(active) if active else {"available": False}
     augmentation_protocol = (
         model_card.get("augmentation_protocol")
@@ -626,10 +635,10 @@ def get_vision_competition_summary(
         active_model_kind=active.model_kind if active else None,
         latest_candidate_id=latest_candidate.id if latest_candidate else None,
         training_pool={
-            "sample_count": status.data.sample_count,
-            "image_available_count": status.data.image_available_count,
+            "sample_count": training_pool_sample_count,
+            "image_available_count": training_pool_image_count,
             "unique_image_sha256_count": unique_sha,
-            "label_distribution": status.data.label_distribution,
+            "label_distribution": training_pool_labels,
             "source_count": len(status.data.sources),
             "top_sources": sources,
             "demo_cases_excluded": True,
@@ -1787,6 +1796,8 @@ def _evaluate_feature_ablation_set(
         scales=scales,
         experiment_profile="standard_attribution",
     )
+    binary_gate_mode = _binary_gate_mode_for_profile("standard_attribution")
+    binary_gate_metadata["mode"] = binary_gate_mode
     prototypes = _build_class_prototypes(
         rows=filtered_rows,
         labels=labels,
@@ -1823,6 +1834,7 @@ def _evaluate_feature_ablation_set(
                 binary_gate_metadata.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN)
             ),
             open_set_min_margin=0.0,
+            binary_gate_mode=binary_gate_mode,
         )
         predictions.append(str(prediction["label"]))
         valid_labels.append(labels[index])
@@ -2093,6 +2105,8 @@ def _evaluate_source_holdout_group(
         source_keys=fit_source_keys,
         experiment_profile=request.experiment_profile,
     )
+    binary_gate_mode = _binary_gate_mode_for_profile(request.experiment_profile)
+    binary_gate_metadata["mode"] = binary_gate_mode
     prototypes = _build_class_prototypes(
         rows=fit_rows,
         labels=fit_labels,
@@ -2137,6 +2151,7 @@ def _evaluate_source_holdout_group(
             real_protection_margin=float(
                 binary_gate_metadata.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN)
             ),
+            binary_gate_mode=binary_gate_mode,
         )
         predicted_label = str(prediction["label"])
         actual_label = labels[index]
@@ -2460,6 +2475,7 @@ def _generator_predictor_from_artifact(artifact: dict[str, object] | None) -> di
             else GENERATOR_ATTRIBUTION_CONFIDENCE_FLOOR
         ),
         "binary_gate_path": str(artifact.get("binary_gate_path") or ""),
+        "binary_gate_mode": str(artifact.get("binary_gate_mode", "enforce")),
         "generated_gate_threshold": float(artifact.get("generated_gate_threshold", GENERATOR_BINARY_GATE_THRESHOLD)),
         "real_protection_margin": float(artifact.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN)),
     }
@@ -2508,6 +2524,7 @@ def _evaluate_generator_condition(
             gpt_detector_threshold=float(predictor["gpt_detector_threshold"]),
             real_protection_margin=float(predictor["real_protection_margin"]),
             open_set_min_margin=float(predictor.get("open_set_min_margin", 0.0)),
+            binary_gate_mode=str(predictor.get("binary_gate_mode", "enforce")),
         )
         predicted_label = str(prediction["label"])
         confidence = float(prediction.get("confidence", 0.0))
@@ -2739,7 +2756,7 @@ def train_fusion_head(request: FusionTrainingRunRequest) -> FusionTrainingRunRes
         means=means,
         scales=scales,
     )
-    tree_artifact_path = _train_tree_artifact(
+    tree_artifact_path, tree_metadata = _train_tree_artifact(
         run_id="pending",
         task_type=FUSION_TASK_TYPE,
         rows=rows,
@@ -2762,6 +2779,7 @@ def train_fusion_head(request: FusionTrainingRunRequest) -> FusionTrainingRunRes
         scales=scales,
         prototypes=prototypes,
         tree_artifact_path=tree_artifact_path,
+        tree_metadata=tree_metadata,
     )
     train_predictions = ensemble["train_predictions"]
     valid_predictions = ensemble["valid_predictions"]
@@ -2771,6 +2789,10 @@ def train_fusion_head(request: FusionTrainingRunRequest) -> FusionTrainingRunRes
     created_at = datetime.now(UTC).isoformat()
     tree_artifact_path = _finalize_tree_artifact(tree_artifact_path, run_id, FUSION_TASK_TYPE)
     ensemble["tree_artifact_path"] = tree_artifact_path
+    if isinstance(ensemble.get("tree_metadata"), dict):
+        ensemble["tree_metadata"]["artifact_path"] = tree_artifact_path
+        if isinstance(ensemble.get("selection_report"), dict) and isinstance(ensemble["selection_report"].get("tree_model"), dict):
+            ensemble["selection_report"]["tree_model"]["artifact_path"] = tree_artifact_path
     result = FusionTrainingRunResult(
         id=run_id,
         created_at=created_at,
@@ -2796,7 +2818,7 @@ def train_fusion_head(request: FusionTrainingRunRequest) -> FusionTrainingRunRes
             f"任务适配过滤：原始可用 {len(raw_samples)} 条，保留 {len(samples)} 条，排除 {len(raw_samples) - len(samples)} 条明显不属于融合任务的辅助样本。",
             "融合特征包含文本风险弱信号、图片本地统计、三个视觉证据头分数、证据数量与来源信号。",
             f"图文语义特征：{'启用本地 CLIP ' + CLIP_MODEL_NAME if CLIP_ENABLED else '未启用，本轮使用轻量本地统计特征'}。",
-            f"训练 Ridge 线性头、ExtraTrees 非线性头并构建 {len(prototypes)} 个本地相似样本原型；在验证集上选择 {ensemble['selected_model']}。",
+            f"训练 Ridge 线性头、boosted-tree 非线性头并构建 {len(prototypes)} 个本地相似样本原型；在验证集上选择 {ensemble['selected_model']}。",
             f"使用分层留出验证：训练 {len(train_indices)} 条，验证 {len(valid_indices)} 条。",
             f"验证指标：MAE { _mae(valid_predictions, valid_labels) }，RMSE { _rmse(valid_predictions, valid_labels) }，风险等级准确率 { _risk_level_accuracy(valid_predictions, valid_labels) }。",
             "保存模型权重、特征标准化参数、指标与模型卡；demo 样例明确排除在训练之外。",
@@ -2816,6 +2838,7 @@ def train_fusion_head(request: FusionTrainingRunRequest) -> FusionTrainingRunRes
             "validation_protocol": split_report,
             "metrics": _metrics_report(train_predictions, train_labels, valid_predictions, valid_labels),
             "ensemble_selection": ensemble["selection_report"],
+            "tree_regressor": ensemble.get("tree_metadata", {}),
             "validation_diagnostics": _validation_diagnostics(samples, labels, valid_predictions, valid_labels),
             "semantic_features": {
                 "clip_enabled": CLIP_ENABLED,
@@ -2848,6 +2871,7 @@ def train_fusion_head(request: FusionTrainingRunRequest) -> FusionTrainingRunRes
             "knn_k": ensemble["knn_k"],
             "prototype_count": len(prototypes),
             "tree_artifact_path": tree_artifact_path,
+            "tree_metadata": ensemble.get("tree_metadata", tree_metadata),
         },
         "knn_prototypes": prototypes,
         "clip_prototypes": ensemble.get("clip_prototypes", []),
@@ -3216,7 +3240,7 @@ def _train_and_save_vision(
         means=means,
         scales=scales,
     )
-    tree_artifact_path = _train_tree_artifact(
+    tree_artifact_path, tree_metadata = _train_tree_artifact(
         run_id="pending",
         task_type=request.task_type,
         rows=rows,
@@ -3239,6 +3263,7 @@ def _train_and_save_vision(
         scales=scales,
         prototypes=prototypes,
         tree_artifact_path=tree_artifact_path,
+        tree_metadata=tree_metadata,
     )
     train_predictions = ensemble["train_predictions"]
     valid_predictions = ensemble["valid_predictions"]
@@ -3248,11 +3273,20 @@ def _train_and_save_vision(
     created_at = datetime.now(UTC).isoformat()
     tree_artifact_path = _finalize_tree_artifact(tree_artifact_path, run_id, request.task_type)
     ensemble["tree_artifact_path"] = tree_artifact_path
+    if isinstance(ensemble.get("tree_metadata"), dict):
+        ensemble["tree_metadata"]["artifact_path"] = tree_artifact_path
+        if isinstance(ensemble.get("selection_report"), dict) and isinstance(ensemble["selection_report"].get("tree_model"), dict):
+            ensemble["selection_report"]["tree_model"]["artifact_path"] = tree_artifact_path
+    model_kind = (
+        "local-vision-tamper-boosted-patch-v1"
+        if request.task_type == "vision_tamper"
+        else "local-vision-evidence-ensemble-v2"
+    )
     result = VisionTrainingRunResult(
         id=run_id,
         created_at=created_at,
         task_type=request.task_type,
-        model_kind="local-vision-evidence-ensemble-v2",
+        model_kind=model_kind,
         status="trained",
         sample_count=len(samples),
         validation_count=len(valid_indices),
@@ -3274,7 +3308,7 @@ def _train_and_save_vision(
             f"任务适配过滤：原始可用 {candidate_count} 条，保留 {len(samples)} 条，排除 {candidate_count - len(samples)} 条明显不属于该证据头的辅助样本。",
             "抽取图片尺寸、文件大小、sha256、字节分布、基础纹理代理统计和文本上下文关键词。",
             f"图文语义特征：{'启用本地 CLIP ' + CLIP_MODEL_NAME if CLIP_ENABLED else '未启用，本轮使用轻量本地统计特征'}。",
-            f"训练 Ridge 线性头、ExtraTrees 非线性头并构建 {len(prototypes)} 个本地相似样本原型；在验证集上选择 {ensemble['selected_model']}。",
+            f"训练 Ridge 线性头、boosted-tree 非线性头并构建 {len(prototypes)} 个本地相似样本原型；在验证集上选择 {ensemble['selected_model']}。",
             f"使用分层留出验证训练本地监督证据头：训练 {len(train_indices)} 条，验证 {len(valid_indices)} 条，特征 {len(feature_names)} 维。",
             f"验证指标：MAE { _mae(valid_predictions, valid_labels) }，RMSE { _rmse(valid_predictions, valid_labels) }，风险等级准确率 { _risk_level_accuracy(valid_predictions, valid_labels) }。",
             "保存模型卡和指标；内置四方向样例只用于训练后展示评测，不参与本次训练。",
@@ -3283,7 +3317,7 @@ def _train_and_save_vision(
             "name": f"{request.task_type} 本地视觉证据头",
             "version": run_id,
             "task_type": request.task_type,
-            "architecture": "图片元数据 + 字节统计 + 文本上下文关键词 + Ridge + 本地 kNN 原型校准集成",
+            "architecture": "图片元数据 + 字节统计 + 文本上下文关键词 + Ridge + XGBoost/CatBoost boosted-tree 风险头 + 本地 kNN 原型校准集成",
             "training_data": "外部导入图片类数据集；内置四方向展示样例不进入训练集。",
             "training_source_summary": _sample_source_summary(samples),
             "task_filter": {
@@ -3296,12 +3330,24 @@ def _train_and_save_vision(
             "metrics": _metrics_report(train_predictions, train_labels, valid_predictions, valid_labels),
             "ensemble_selection": ensemble["selection_report"],
             "validation_diagnostics": _validation_diagnostics(samples, labels, valid_predictions, valid_labels),
+            "tamper_forensics_policy": (
+                {
+                    "enabled": True,
+                    "image_level_model": "XGBoost/CatBoost boosted-tree risk head selected on validation split",
+                    "region_policy": "runtime patch candidate scan; returns candidate abnormal regions only, not pixel-level segmentation",
+                    "requires_future_mask_benchmark": True,
+                    "boundary": "候选异常区域仅用于辅助研判和人工复核，不构成篡改定论或司法鉴定结论。",
+                }
+                if request.task_type == "vision_tamper"
+                else {}
+            ),
             "semantic_features": {
                 "clip_enabled": CLIP_ENABLED,
                 "clip_model": CLIP_MODEL_NAME if CLIP_ENABLED else None,
                 "clip_feature_dims": CLIP_FEATURE_DIMS,
                 "extractor_version": CLIP_EXTRACTOR_VERSION,
             },
+            "tree_regressor": ensemble.get("tree_metadata", {}),
             "excluded_demo_cases": [case.id for case in DEMO_CASES],
             "leakage_controls": [
                 "外部样本 label 字段只作为监督目标映射，不进入图片或文本上下文特征。",
@@ -3327,6 +3373,7 @@ def _train_and_save_vision(
             "knn_k": ensemble["knn_k"],
             "prototype_count": len(prototypes),
             "tree_artifact_path": tree_artifact_path,
+            "tree_metadata": ensemble.get("tree_metadata", tree_metadata),
         },
         "knn_prototypes": prototypes,
         "clip_prototypes": ensemble.get("clip_prototypes", []),
@@ -3356,7 +3403,7 @@ def _train_and_save_generator_attribution(
     known_labels = [label for label in labels if label != "unknown"]
     if len(set(known_labels)) < 2:
         raise ValueError(
-            "生成模型归因至少需要 2 个非 unknown 来源类别，例如 gpt-image2、nano-banana、seedream-4、stable-diffusion、midjourney、real。"
+            "生成图片三分类至少需要 2 个非 unknown 类别，例如 gpt-image2、other-generated、real。"
         )
     run_id = str(uuid4())
     train_indices, valid_indices = _split_generator_validation_indices(samples, labels, request)
@@ -3415,6 +3462,8 @@ def _train_and_save_generator_attribution(
         source_keys=train_source_keys,
         experiment_profile=request.experiment_profile,
     )
+    binary_gate_mode = _binary_gate_mode_for_profile(request.experiment_profile)
+    binary_gate_metadata["mode"] = binary_gate_mode
     prototypes = _build_class_prototypes(
         rows=fit_rows,
         labels=fit_labels,
@@ -3454,6 +3503,7 @@ def _train_and_save_generator_attribution(
                 binary_gate_metadata.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN)
             ),
             open_set_min_margin=float(getattr(request, "open_set_min_margin", 0.0) or 0.0),
+            binary_gate_mode=binary_gate_mode,
         )["label"]
         for index in fit_train_indices
     ]
@@ -3478,6 +3528,7 @@ def _train_and_save_generator_attribution(
                 binary_gate_metadata.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN)
             ),
             open_set_min_margin=float(getattr(request, "open_set_min_margin", 0.0) or 0.0),
+            binary_gate_mode=binary_gate_mode,
         )["label"]
         for index in fit_valid_indices
     ]
@@ -3499,7 +3550,7 @@ def _train_and_save_generator_attribution(
         id=run_id,
         created_at=created_at,
         task_type=request.task_type,
-        model_kind="local-generator-attribution-extratrees-v2",
+        model_kind="local-generator-attribution-boosted-tree-v3",
         status="trained",
         sample_count=len(samples),
         validation_count=len(valid_indices),
@@ -3521,11 +3572,11 @@ def _train_and_save_generator_attribution(
             f"任务适配过滤：原始可用 {candidate_count} 条，保留 {len(samples)} 条，排除 {candidate_count - len(samples)} 条明显不属于归因任务的辅助样本。",
             f"实验 profile：{request.experiment_profile}；样本域 {profile_report['domain_distribution']}；标签策略：{profile_report['label_policy']}。",
             f"分轨目标：{profile_policy['chinese_name']}；{profile_policy['objective']} 验收政策：{profile_policy['activation_policy']}",
-            "将标签归一化；五类主流归因只强归因 gpt-image2、nano-banana、seedream-4、stable-diffusion 系列、midjourney，其他生成器低置信时输出 unknown。",
+            "将标签归一化为三分类训练目标：gpt-image2、other-generated、real；unknown 仅作为预测阶段低置信退让。",
             "抽取图片尺寸、文件大小、字节分布、压缩残差、频域/块效应代理、文字覆盖/水印代理和清洗后的视觉语义上下文。",
             augmentation_trace,
             validation_trace,
-            f"以 ExtraTreesClassifier 为主分类器、类别原型为兜底；验证集输出 accuracy {classification_metrics['accuracy']}、macro F1 {classification_metrics['macro_f1']}。",
+            f"以 {classifier_metadata.get('model', 'boosted-tree classifier')} 为主分类器、类别原型为兜底；验证集输出 accuracy {classification_metrics['accuracy']}、macro F1 {classification_metrics['macro_f1']}。",
             "低置信或距离过远时输出 unknown，不强行归因为某个生成模型。",
             "保存模型卡和指标；内置四方向展示样例只用于训练后展示评测，不参与本次训练。",
         ],
@@ -3533,10 +3584,16 @@ def _train_and_save_generator_attribution(
             "name": "生成模型来源归因头",
             "version": run_id,
             "task_type": request.task_type,
-            "architecture": "图片本地统计/压缩/频域/纹理/文字覆盖代理 + 可选 CLIP 语义上下文 + ExtraTreesClassifier + 标准化类别原型兜底 + unknown 阈值",
+            "architecture": "图片本地统计/压缩/频域/纹理/文字覆盖代理 + 可选 DINOv2/ConvNeXt/CLIP 语义 embedding + XGBoost/CatBoost boosted-tree 三分类头 + 标准化类别原型兜底 + open-set unknown 阈值",
             "primary_classifier": classifier_metadata,
             "gpt_image2_detector": gpt_detector_metadata,
             "binary_generated_gate": binary_gate_metadata,
+            "real_photo_guard": {
+                "enabled": True,
+                "policy": "高分辨率 JPEG、自然亮度/饱和度、边缘、纹理与压缩残差代理信号触发真实照片保护；仅作为辅助线索，不构成真实性结论。",
+                "threshold": 0.72,
+                "uses_filename_or_case_id": False,
+            },
             "feature_policy": feature_policy,
             "experiment_profile": profile_report,
             "profile_policy": profile_policy,
@@ -3546,7 +3603,7 @@ def _train_and_save_generator_attribution(
                 "candidate_count": candidate_count,
                 "selected_count": len(samples),
                 "excluded_as_auxiliary_or_mismatched": candidate_count - len(samples),
-                "policy": "仅保留 task_type=vision_generator_attribution 的图片样本，标签用于来源类别监督。",
+                "policy": "仅保留 task_type=vision_generator_attribution 的图片样本；原始来源标签映射为 GPT-image2 / other-generated / real 三分类监督目标。",
             },
             "validation_protocol": split_report,
             "augmentation_protocol": augmentation_protocol,
@@ -3564,6 +3621,7 @@ def _train_and_save_generator_attribution(
                 "clip_model": CLIP_MODEL_NAME if CLIP_ENABLED else None,
                 "clip_feature_dims": CLIP_FEATURE_DIMS,
                 "extractor_version": CLIP_EXTRACTOR_VERSION,
+                "embedding_upgrade_path": "DINOv2/ConvNeXt embedding 可作为后续缓存特征接入；当前测试环境未强制下载大模型，避免阻塞 CPU 单测。",
             },
             "excluded_demo_cases": [case.id for case in DEMO_CASES],
             "leakage_controls": [
@@ -3573,7 +3631,7 @@ def _train_and_save_generator_attribution(
                 "内置四方向展示样例不进入训练、验证或特征缓存样本。",
             ],
             "boundary": (
-                "只能输出生成来源线索，例如疑似 GPT-image2；低置信输出 unknown。"
+                "只能输出生成图片研判线索：疑似 GPT-image2、其他 AI 生成图、真实照片；低置信输出 unknown。"
                 "不替代 C2PA、水印、平台元数据、原始发布链路或人工取证结论。"
             ),
             "not_for": "不得把通用 AIGC 分数冒充 GPT-image2 归因；未覆盖类别和跨平台压缩图片需要人工复核。",
@@ -3595,6 +3653,7 @@ def _train_and_save_generator_attribution(
         "gpt_image2_detector_metadata": gpt_detector_metadata,
         "binary_gate_path": binary_gate_path,
         "binary_gate_metadata": binary_gate_metadata,
+        "binary_gate_mode": binary_gate_mode,
         "generated_gate_threshold": binary_gate_metadata.get("generated_threshold", GENERATOR_BINARY_GATE_THRESHOLD),
         "real_protection_margin": binary_gate_metadata.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN),
         "class_counts": source_distribution,
@@ -4349,6 +4408,7 @@ def _predict_generator_attribution_asset(
             else GENERATOR_ATTRIBUTION_CONFIDENCE_FLOOR
         ),
         real_protection_margin=float(artifact.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN)),
+        binary_gate_mode=str(artifact.get("binary_gate_mode", "enforce")),
         open_set_min_margin=float(
             (artifact.get("open_set_unknown_policy") or {}).get("open_set_min_margin", 0.0)
             if isinstance(artifact.get("open_set_unknown_policy"), dict)
@@ -4365,6 +4425,7 @@ def _predict_generator_attribution_asset(
         "ranked_candidates": candidate_ranking,
         "candidate_ranking": candidate_ranking,
         "binary_gate": prediction.get("binary_gate"),
+        "real_photo_guard": prediction.get("real_photo_guard"),
         "review_recommendation": (
             prediction.get("binary_gate", {}).get("review_recommendation")
             if isinstance(prediction.get("binary_gate"), dict)
@@ -4634,13 +4695,16 @@ def _generator_profile_policy(profile: str) -> dict[str, object]:
 
 def _generator_profile_feature_policy(feature_names: list[str], profile: str) -> dict[str, object]:
     raw_names = list(feature_names)
-    source_guard_enabled = os.getenv("SMARTPOLICE_GENERATOR_SOURCE_GUARD", "").lower() in {"1", "true", "yes", "on"}
+    source_guard_disabled = os.getenv("SMARTPOLICE_GENERATOR_SOURCE_GUARD", "").lower() in {"0", "false", "no", "off"}
+    source_guard_enabled = not source_guard_disabled
     source_guard_profiles = {
+        "standard_attribution",
         "binary_generated_gate",
         "gpt_image2_ovr",
         "multi_generator_label_covered",
         "mainstream_five_attribution",
         "social_propagation_robustness",
+        "clean_origin_attribution",
     }
     if profile not in source_guard_profiles or not source_guard_enabled:
         return {
@@ -4654,18 +4718,15 @@ def _generator_profile_feature_policy(feature_names: list[str], profile: str) ->
         }
     blocked_exact = {
         "image_bytes_log",
-        "image_megapixels",
-        "aspect_ratio",
         "png_ext",
         "jpg_ext",
         "webp_ext",
         "small_image_signal",
-        "screenshot_shape_signal",
+        "text_enriched_image_context_signal",
+        "visual_text_context_signal",
+        "watermark_context_signal",
     }
-    blocked_prefixes = (
-        "clip_txt_",
-        "clip_gap_",
-    )
+    blocked_prefixes: tuple[str, ...] = ()
     removed = [
         name
         for name in raw_names
@@ -4687,8 +4748,8 @@ def _generator_profile_feature_policy(feature_names: list[str], profile: str) ->
         "kept_count": len(kept),
         "source_guard_enabled": source_guard_enabled,
         "rationale": (
-            "多来源/五主流归因过滤文件大小、分辨率、长宽比、扩展名和文本/图文差距类来源代理特征，"
-            "优先保留像素、纹理、频域、压缩残差等图像取证特征。"
+            "生成归因默认过滤扩展名、文件大小、小图标记和文本上下文代理等强来源捷径特征，"
+            "保留分辨率/比例、CLIP 语义差距、像素统计、纹理、频域、边缘和压缩残差等可解释视觉特征。"
         ),
     }
 
@@ -4735,7 +4796,7 @@ def _map_generator_profile_label(
     source_counts_by_label: dict[str, set[str]],
 ) -> str | None:
     if profile == "standard_attribution":
-        return label
+        return _generator_three_way_label(label)
     if profile == "binary_generated_gate":
         return _binary_generation_label(label)
     if profile == "gpt_image2_ovr":
@@ -4763,7 +4824,7 @@ def _map_generator_profile_label(
 
 def _generator_profile_label_policy(profile: str) -> str:
     policies = {
-        "standard_attribution": "保持原始生成器归因标签。",
+        "standard_attribution": "三分类：GPT-image2 / other-generated / real；unknown 仅作为预测低置信退让。",
         "binary_generated_gate": "映射为 generated/real 二分类。",
         "gpt_image2_ovr": "GPT-image2 为正类，real 与 other-generated 分开保留。",
         "mainstream_five_attribution": "只保留 GPT-image2、Nano Banana、豆包/Seedream、Stable Diffusion 系列、Midjourney 五类主流来源；其他生成器映射 unknown。",
@@ -4772,6 +4833,14 @@ def _generator_profile_label_policy(profile: str) -> str:
         "social_propagation_robustness": "传播/真实图 hard-negative 保留为 real，对生成图保留 generated 对照，用于传播鲁棒二分类候选。",
     }
     return policies.get(profile, "保持原始标签。")
+
+
+def _generator_three_way_label(label: str) -> str:
+    if label == "gpt-image2":
+        return "gpt-image2"
+    if label == "real":
+        return "real"
+    return "other-generated"
 
 
 def _mainstream_five_generator_label(label: str) -> str:
@@ -4796,6 +4865,8 @@ def _balanced_generator_samples_for_request(
     request: VisionTrainingRunRequest,
 ) -> list[ExternalTrainingSample]:
     profile = getattr(request, "experiment_profile", "standard_attribution")
+    if profile == "standard_attribution":
+        return _balanced_standard_generator_three_way_samples(samples, limit)
     if profile == "gpt_image2_ovr":
         return _balanced_gpt_image2_ovr_samples(samples, limit)
     if profile != "mainstream_five_attribution":
@@ -4808,11 +4879,65 @@ def _balanced_generator_samples_for_profile(
     limit: int,
     profile: str,
 ) -> list[ExternalTrainingSample]:
+    if profile == "standard_attribution":
+        return _balanced_standard_generator_three_way_samples(samples, limit)
     if profile == "gpt_image2_ovr":
         return _balanced_gpt_image2_ovr_samples(samples, limit)
     if profile != "mainstream_five_attribution":
         return _balanced_generator_samples(samples, limit)
     return _balanced_mainstream_five_samples(samples, limit)
+
+
+def _balanced_standard_generator_three_way_samples(
+    samples: list[ExternalTrainingSample],
+    limit: int,
+) -> list[ExternalTrainingSample]:
+    if limit <= 0:
+        return list(samples)
+    by_label_source: dict[str, dict[str, list[ExternalTrainingSample]]] = {
+        "gpt-image2": {},
+        "other-generated": {},
+        "real": {},
+    }
+    for sample in samples:
+        label = _generator_three_way_label(_normalize_generator_label(sample.label))
+        source_key = _source_holdout_group_name(sample, "dataset_source")
+        by_label_source[label].setdefault(source_key, []).append(sample)
+    label_counts = {
+        label: sum(len(bucket) for bucket in source_buckets.values())
+        for label, source_buckets in by_label_source.items()
+    }
+    minority_count = min(max(1, count) for count in label_counts.values())
+    balanced_cap = min(minority_count, max(1, limit // 3))
+    per_label_cap = {
+        label: min(label_counts[label], balanced_cap)
+        for label in ("gpt-image2", "real", "other-generated")
+    }
+    label_orders = {
+        label: _source_round_robin_samples(source_buckets, source_offset=offset)
+        for offset, (label, source_buckets) in enumerate(by_label_source.items())
+    }
+    selected: list[ExternalTrainingSample] = []
+    selected_ids: set[str] = set()
+    for label in ("gpt-image2", "real", "other-generated"):
+        for sample in label_orders.get(label, [])[:per_label_cap[label]]:
+            if sample.id in selected_ids:
+                continue
+            selected.append(sample)
+            selected_ids.add(sample.id)
+    should_backfill = len(selected) < min(limit, 8)
+    if should_backfill:
+        for label in ("gpt-image2", "real", "other-generated"):
+            for sample in label_orders.get(label, []):
+                if sample.id in selected_ids:
+                    continue
+                selected.append(sample)
+                selected_ids.add(sample.id)
+                if len(selected) >= limit:
+                    break
+            if len(selected) >= limit:
+                break
+    return selected[:limit]
 
 
 def _balanced_gpt_image2_ovr_samples(
@@ -4962,8 +5087,12 @@ def _balanced_generator_samples(
 
 def _source_round_robin_samples(
     by_source: dict[str, list[ExternalTrainingSample]],
+    source_offset: int = 0,
 ) -> list[ExternalTrainingSample]:
     ordered_sources = sorted(by_source, key=lambda source: (-len(by_source[source]), source))
+    if ordered_sources:
+        offset = source_offset % len(ordered_sources)
+        ordered_sources = [*ordered_sources[offset:], *ordered_sources[:offset]]
     ordered: list[ExternalTrainingSample] = []
     cursor = 0
     while ordered_sources:
@@ -5020,8 +5149,11 @@ def _sample_matches_task(sample: ExternalTrainingSample, task_type: str) -> bool
                 sample.source_url or "",
                 sample.scenario,
                 sample.title,
+                sample.label,
             ]
         ).lower()
+        if task_type == "vision_tamper" and _is_generator_only_source(signature):
+            return False
         own_keywords = TASK_LABEL_KEYWORDS.get(task_type, ())
         other_keywords = tuple(
             keyword
@@ -5037,6 +5169,41 @@ def _sample_matches_task(sample: ExternalTrainingSample, task_type: str) -> bool
             return False
         return True
     return False
+
+
+def _is_generator_only_source(signature: str) -> bool:
+    generator_markers = (
+        "tiny-genimage",
+        "genimage",
+        "gpt-image",
+        "gpt_image",
+        "midjourney",
+        "stable diffusion",
+        "stable-diffusion",
+        "sdxl",
+        "flux",
+        "dall-e",
+        "dalle",
+        "seedream",
+        "nano banana",
+        "qwen-image",
+        "ai_generated",
+    )
+    tamper_markers = (
+        "tamper",
+        "tampered",
+        "manipulated",
+        "manipulation",
+        "splicing",
+        "splice",
+        "forgery",
+        "authentic_unmodified",
+        "copy-move",
+        "inpaint",
+    )
+    return any(marker in signature for marker in generator_markers) and not any(
+        marker in signature for marker in tamper_markers
+    )
 
 
 def _known_auxiliary_dataset(sample: ExternalTrainingSample) -> bool:
@@ -5111,10 +5278,10 @@ def _split_class_indices(labels: list[str]) -> tuple[list[int], list[int]]:
     by_label: dict[str, list[int]] = {}
     for index, label in enumerate(labels):
         by_label.setdefault(label, []).append(index)
+    targets = _label_validation_targets(Counter(labels), target_valid)
     valid_indices: list[int] = []
-    for indices in sorted(by_label.values(), key=lambda item: (len(item), item[0])):
-        if len(indices) >= 2 and len(valid_indices) < target_valid:
-            valid_indices.append(indices[-1])
+    for label in sorted(targets, key=lambda item: (0 if item in {"gpt-image2", "real"} else 1, item)):
+        valid_indices.extend(by_label.get(label, [])[-targets[label]:])
     cursor = len(labels) - 1
     while len(valid_indices) < target_valid and cursor >= 0:
         if cursor not in valid_indices:
@@ -5211,17 +5378,17 @@ def _split_source_stratified_indices(
         by_group_label.setdefault((group, labels[index]), []).append(index)
     if len({group for group, _ in by_group_label}) < 2:
         return None
+    label_counts = Counter(label for label in labels if label != "unknown")
+    valid_targets = _label_validation_targets(label_counts, target_valid)
     valid_indices: list[int] = []
-    for (group, label), indices in sorted(
-        by_group_label.items(),
-        key=lambda item: (-len(item[1]), item[0][0], item[0][1]),
-    ):
-        if len(indices) < 3 or label == "unknown":
-            continue
-        take = max(1, min(len(indices) // 5, 12))
-        valid_indices.extend(indices[-take:])
-        if len(valid_indices) >= target_valid:
-            break
+    for label in sorted(valid_targets, key=lambda item: (0 if item in {"gpt-image2", "real"} else 1, item)):
+        label_buckets = {
+            group: indices
+            for (group, bucket_label), indices in by_group_label.items()
+            if bucket_label == label and len(indices) >= 2
+        }
+        ordered = _round_robin_index_buckets(label_buckets)
+        valid_indices.extend(ordered[:valid_targets[label]])
     if len(valid_indices) < min(8, target_valid):
         return None
     valid_set = set(valid_indices[:target_valid])
@@ -5230,6 +5397,50 @@ def _split_source_stratified_indices(
     if not _source_holdout_train_is_valid(train_indices, labels, required_labels):
         return None
     return train_indices, sorted(valid_set)
+
+
+def _label_validation_targets(label_counts: Counter[str], target_valid: int) -> dict[str, int]:
+    labels = [label for label, count in label_counts.items() if count >= 2]
+    if not labels:
+        return {}
+    total = sum(label_counts[label] for label in labels)
+    raw_targets = {
+        label: max(1, min(label_counts[label] - 1, int(round(target_valid * label_counts[label] / total))))
+        for label in labels
+    }
+    while sum(raw_targets.values()) > target_valid:
+        label = max(raw_targets, key=lambda item: (raw_targets[item], label_counts[item], item))
+        if raw_targets[label] <= 1:
+            break
+        raw_targets[label] -= 1
+    while sum(raw_targets.values()) < target_valid:
+        candidates = [
+            label
+            for label in labels
+            if raw_targets[label] < label_counts[label] - 1
+        ]
+        if not candidates:
+            break
+        label = max(candidates, key=lambda item: (label_counts[item] - raw_targets[item], label_counts[item], item))
+        raw_targets[label] += 1
+    return dict(raw_targets)
+
+
+def _round_robin_index_buckets(by_group: dict[str, list[int]]) -> list[int]:
+    ordered_groups = sorted(by_group, key=lambda group: (-len(by_group[group]), group))
+    ordered: list[int] = []
+    cursor = 0
+    while ordered_groups:
+        progressed = False
+        for group in ordered_groups:
+            bucket = by_group[group]
+            if cursor < len(bucket):
+                ordered.append(bucket[-(cursor + 1)])
+                progressed = True
+        if not progressed:
+            break
+        cursor += 1
+    return ordered
 
 
 def _source_holdout_group_score(group_name: str, indices: list[int], labels: list[str]) -> tuple[int, int, int]:
@@ -5419,6 +5630,238 @@ def _predict_from_parts(
     return bias + sum(weights[name] * normalized.get(name, 0.0) for name in weights)
 
 
+def _model_slug(model_name: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z_-]+", "-", model_name.strip().lower()).strip("-")
+    return slug or "model"
+
+
+def _fit_advanced_classifier(
+    *,
+    train_matrix: list[list[float]],
+    train_labels: list[str],
+    sample_weights: list[float] | None = None,
+    random_state: int = 42,
+) -> tuple[object | None, dict[str, object]]:
+    metadata: dict[str, object] = {
+        "enabled": False,
+        "model": "AdvancedBoostedTreeClassifier",
+        "sample_count": len(train_labels),
+        "feature_count": len(train_matrix[0]) if train_matrix else 0,
+        "class_distribution": dict(sorted(Counter(train_labels).items())),
+        "fallback_chain": ["XGBoost", "CatBoost"],
+    }
+    if not train_matrix or len(set(train_labels)) < 2:
+        return None, {**metadata, "reason": "not enough labeled classes"}
+    model, details = _try_fit_xgboost_classifier(
+        train_matrix=train_matrix,
+        train_labels=train_labels,
+        sample_weights=sample_weights,
+        random_state=random_state,
+    )
+    if model is not None:
+        return model, {**metadata, **details, "enabled": True}
+    first_failure = details.get("reason")
+    model, details = _try_fit_catboost_classifier(
+        train_matrix=train_matrix,
+        train_labels=train_labels,
+        sample_weights=sample_weights,
+        random_state=random_state,
+    )
+    if model is not None:
+        return model, {
+            **metadata,
+            **details,
+            "enabled": True,
+            "fallback_reason": first_failure,
+        }
+    second_failure = details.get("reason")
+    return None, {
+        **metadata,
+        **details,
+        "reason": f"XGBoost failed: {first_failure}; CatBoost failed: {second_failure}",
+    }
+
+
+def _try_fit_xgboost_classifier(
+    *,
+    train_matrix: list[list[float]],
+    train_labels: list[str],
+    sample_weights: list[float] | None,
+    random_state: int,
+) -> tuple[object | None, dict[str, object]]:
+    try:
+        from sklearn.preprocessing import LabelEncoder
+        from xgboost import XGBClassifier
+    except Exception as exc:
+        return None, {"reason": f"xgboost import failed: {type(exc).__name__}"}
+    try:
+        encoder = LabelEncoder()
+        encoded = encoder.fit_transform(train_labels)
+        model = XGBClassifier(
+            n_estimators=max(80, ADVANCED_TREE_ESTIMATORS),
+            max_depth=4,
+            learning_rate=0.06,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            min_child_weight=max(1, ADVANCED_TREE_MIN_SAMPLES // 4),
+            objective="multi:softprob",
+            eval_metric="mlogloss",
+            tree_method="hist",
+            random_state=random_state,
+            n_jobs=1,
+            verbosity=0,
+        )
+        fit_kwargs = {"sample_weight": sample_weights} if sample_weights else {}
+        model.fit(train_matrix, encoded, **fit_kwargs)
+        return _EncodedClassifier(model, list(encoder.classes_)), {
+            "model": "XGBoostClassifier",
+            "model_family": "boosted_tree",
+            "n_estimators": max(80, ADVANCED_TREE_ESTIMATORS),
+            "min_samples": ADVANCED_TREE_MIN_SAMPLES,
+            "class_encoding": "sklearn.LabelEncoder wrapper",
+        }
+    except Exception as exc:
+        return None, {"reason": f"xgboost fit failed: {type(exc).__name__}"}
+
+
+def _try_fit_catboost_classifier(
+    *,
+    train_matrix: list[list[float]],
+    train_labels: list[str],
+    sample_weights: list[float] | None,
+    random_state: int,
+) -> tuple[object | None, dict[str, object]]:
+    try:
+        from catboost import CatBoostClassifier
+    except Exception as exc:
+        return None, {"reason": f"catboost import failed: {type(exc).__name__}"}
+    try:
+        model = CatBoostClassifier(
+            iterations=max(80, ADVANCED_TREE_ESTIMATORS),
+            depth=6,
+            learning_rate=0.05,
+            loss_function="MultiClass",
+            random_seed=random_state,
+            verbose=False,
+            allow_writing_files=False,
+            thread_count=1,
+        )
+        fit_kwargs = {"sample_weight": sample_weights} if sample_weights else {}
+        model.fit(train_matrix, train_labels, **fit_kwargs)
+        return model, {
+            "model": "CatBoostClassifier",
+            "model_family": "boosted_tree",
+            "iterations": max(80, ADVANCED_TREE_ESTIMATORS),
+            "min_samples": ADVANCED_TREE_MIN_SAMPLES,
+        }
+    except Exception as exc:
+        return None, {"reason": f"catboost fit failed: {type(exc).__name__}"}
+
+
+def _fit_advanced_regressor(
+    *,
+    train_matrix: list[list[float]],
+    train_labels: list[int],
+    random_state: int = 42,
+) -> tuple[object | None, dict[str, object]]:
+    metadata: dict[str, object] = {
+        "enabled": False,
+        "model": "AdvancedBoostedTreeRegressor",
+        "sample_count": len(train_labels),
+        "feature_count": len(train_matrix[0]) if train_matrix else 0,
+        "fallback_chain": ["XGBoost", "CatBoost"],
+    }
+    if len(train_matrix) < 4:
+        return None, {**metadata, "reason": "not enough samples"}
+    model, details = _try_fit_xgboost_regressor(train_matrix, train_labels, random_state)
+    if model is not None:
+        return model, {**metadata, **details, "enabled": True}
+    first_failure = details.get("reason")
+    model, details = _try_fit_catboost_regressor(train_matrix, train_labels, random_state)
+    if model is not None:
+        return model, {**metadata, **details, "enabled": True, "fallback_reason": first_failure}
+    second_failure = details.get("reason")
+    return None, {
+        **metadata,
+        **details,
+        "reason": f"XGBoost failed: {first_failure}; CatBoost failed: {second_failure}",
+    }
+
+
+def _try_fit_xgboost_regressor(
+    train_matrix: list[list[float]],
+    train_labels: list[int],
+    random_state: int,
+) -> tuple[object | None, dict[str, object]]:
+    try:
+        from xgboost import XGBRegressor
+    except Exception as exc:
+        return None, {"reason": f"xgboost import failed: {type(exc).__name__}"}
+    try:
+        model = XGBRegressor(
+            n_estimators=max(80, ADVANCED_TREE_ESTIMATORS),
+            max_depth=4,
+            learning_rate=0.06,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            min_child_weight=max(1, ADVANCED_TREE_MIN_SAMPLES // 4),
+            objective="reg:squarederror",
+            tree_method="hist",
+            random_state=random_state,
+            n_jobs=1,
+            verbosity=0,
+        )
+        model.fit(train_matrix, train_labels)
+        return model, {
+            "model": "XGBoostRegressor",
+            "model_family": "boosted_tree",
+            "n_estimators": max(80, ADVANCED_TREE_ESTIMATORS),
+            "min_samples": ADVANCED_TREE_MIN_SAMPLES,
+        }
+    except Exception as exc:
+        return None, {"reason": f"xgboost fit failed: {type(exc).__name__}"}
+
+
+def _try_fit_catboost_regressor(
+    train_matrix: list[list[float]],
+    train_labels: list[int],
+    random_state: int,
+) -> tuple[object | None, dict[str, object]]:
+    try:
+        from catboost import CatBoostRegressor
+    except Exception as exc:
+        return None, {"reason": f"catboost import failed: {type(exc).__name__}"}
+    try:
+        model = CatBoostRegressor(
+            iterations=max(80, ADVANCED_TREE_ESTIMATORS),
+            depth=6,
+            learning_rate=0.05,
+            loss_function="RMSE",
+            random_seed=random_state,
+            verbose=False,
+            allow_writing_files=False,
+            thread_count=1,
+        )
+        model.fit(train_matrix, train_labels)
+        return model, {
+            "model": "CatBoostRegressor",
+            "model_family": "boosted_tree",
+            "iterations": max(80, ADVANCED_TREE_ESTIMATORS),
+            "min_samples": ADVANCED_TREE_MIN_SAMPLES,
+        }
+    except Exception as exc:
+        return None, {"reason": f"catboost fit failed: {type(exc).__name__}"}
+
+
+class _EncodedClassifier:
+    def __init__(self, model: object, classes: list[object]) -> None:
+        self.model = model
+        self.classes_ = [str(item) for item in classes]
+
+    def predict_proba(self, matrix: list[list[float]]) -> object:
+        return self.model.predict_proba(matrix)
+
+
 def _build_knn_prototypes(
     *,
     rows: list[dict[str, float]],
@@ -5508,15 +5951,10 @@ def _train_generator_classifier_artifact(
 ) -> tuple[str | None, dict[str, object]]:
     metadata: dict[str, object] = {
         "enabled": False,
-        "model": "ExtraTreesClassifier",
+        "model": "advanced-tree-classifier",
         "reason": "sklearn unavailable or training failed",
     }
-    try:
-        from sklearn.ensemble import ExtraTreesClassifier
-    except Exception as exc:
-        metadata["reason"] = f"sklearn import failed: {type(exc).__name__}"
-        return None, metadata
-    if len(train_indices) < 20 or len(set(labels[index] for index in train_indices)) < 2:
+    if len(train_indices) < min(ADVANCED_TREE_MIN_SAMPLES, 8) or len(set(labels[index] for index in train_indices)) < 2:
         metadata["reason"] = "not enough labeled classes"
         return None, metadata
     train_matrix = [
@@ -5524,23 +5962,26 @@ def _train_generator_classifier_artifact(
         for index in train_indices
     ]
     train_labels = [labels[index] for index in train_indices]
-    sample_weights = _source_balanced_sample_weights(train_labels, train_indices, source_keys)
-    model = ExtraTreesClassifier(
-        n_estimators=GENERATOR_TREE_ESTIMATORS,
-        min_samples_leaf=GENERATOR_TREE_MIN_SAMPLES_LEAF,
-        max_features="sqrt",
-        class_weight="balanced",
-        random_state=42,
-        n_jobs=1,
+    sample_weights = _source_balanced_sample_weights(
+        train_labels,
+        train_indices,
+        source_keys,
+        real_weight_multiplier=GENERATOR_REAL_CLASS_WEIGHT,
+        hard_negative_multiplier=GENERATOR_REAL_HARD_NEGATIVE_WEIGHT,
     )
-    try:
-        model.fit(train_matrix, train_labels, sample_weight=sample_weights)
-    except Exception as exc:
-        metadata["reason"] = f"fit failed: {type(exc).__name__}"
+    model, model_metadata = _fit_advanced_classifier(
+        train_matrix=train_matrix,
+        train_labels=train_labels,
+        sample_weights=sample_weights,
+        random_state=42,
+    )
+    if model is None:
+        metadata.update(model_metadata)
         return None, metadata
     MODEL_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     safe_task = re.sub(r"[^0-9A-Za-z_-]+", "_", GENERATOR_ATTRIBUTION_TASK)
-    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-extratrees-classifier.pkl"
+    model_slug = _model_slug(str(model_metadata.get("model") or "advanced-tree-classifier"))
+    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-{model_slug}-classifier.pkl"
     try:
         with path.open("wb") as file:
             pickle.dump(model, file)
@@ -5549,15 +5990,13 @@ def _train_generator_classifier_artifact(
         return None, metadata
     return str(path), {
         "enabled": True,
-        "model": "ExtraTreesClassifier",
-        "n_estimators": GENERATOR_TREE_ESTIMATORS,
-        "min_samples_leaf": GENERATOR_TREE_MIN_SAMPLES_LEAF,
-        "max_features": "sqrt",
-        "class_weight": "balanced",
-        "sample_weight_policy": "balanced within each generator label across dataset_source groups",
+        **model_metadata,
+        "sample_weight_policy": "balanced within each generator label across dataset_source groups; boosts real photo class and real hard-negative sources",
+        "real_weight_multiplier": GENERATOR_REAL_CLASS_WEIGHT,
+        "real_hard_negative_multiplier": GENERATOR_REAL_HARD_NEGATIVE_WEIGHT,
         "feature_count": len(feature_names),
         "artifact_path": str(path),
-        "note": "主分类器只使用图像统计/压缩/纹理特征，不使用文本来源字段。",
+        "note": "主分类器只使用 XGBoost/CatBoost boosted-tree；两者均不可用时不训练新分类器，只使用类别原型兼容预测。只使用图像统计/压缩/纹理特征，不使用文本来源字段。",
     }
 
 
@@ -5576,9 +6015,9 @@ def _train_generator_binary_gate_artifact(
     gate_policy = _generator_binary_gate_policy(experiment_profile)
     metadata: dict[str, object] = {
         "enabled": False,
-        "model": "ExtraTreesClassifier",
+        "model": "AdvancedBoostedTreeClassifier",
         "target": "generated_vs_real",
-        "reason": "sklearn unavailable, insufficient real samples, or training failed",
+        "reason": "boosted-tree dependencies unavailable, insufficient real/generated samples, or training failed",
         "generated_threshold": GENERATOR_BINARY_GATE_THRESHOLD,
         "real_protection_margin": gate_policy["real_protection_margin"],
     }
@@ -5588,18 +6027,20 @@ def _train_generator_binary_gate_artifact(
         metadata["reason"] = "not enough real/generated samples for binary gate"
         metadata["class_distribution"] = dict(sorted(counts.items()))
         return None, metadata
-    try:
-        from sklearn.ensemble import ExtraTreesClassifier
-    except Exception as exc:
-        metadata["reason"] = f"sklearn import failed: {type(exc).__name__}"
-        metadata["class_distribution"] = dict(sorted(counts.items()))
-        return None, metadata
     train_matrix = [
         _vector_from_normalized(_normalize(rows[index], means, scales), feature_names)
         for index in train_indices
     ]
-    real_weight_multiplier = 1.65 if experiment_profile in {"binary_generated_gate", "social_propagation_robustness"} else 1.0
-    hard_negative_multiplier = 1.85 if experiment_profile in {"binary_generated_gate", "social_propagation_robustness"} else 1.0
+    real_weight_multiplier = (
+        1.65
+        if experiment_profile in {"binary_generated_gate", "social_propagation_robustness"}
+        else GENERATOR_REAL_CLASS_WEIGHT
+    )
+    hard_negative_multiplier = (
+        1.85
+        if experiment_profile in {"binary_generated_gate", "social_propagation_robustness"}
+        else GENERATOR_REAL_HARD_NEGATIVE_WEIGHT
+    )
     generated_hard_positive_multiplier = 1.0
     sample_weights = _source_balanced_sample_weights(
         binary_labels,
@@ -5609,16 +6050,17 @@ def _train_generator_binary_gate_artifact(
         hard_negative_multiplier=hard_negative_multiplier,
         generated_hard_positive_multiplier=generated_hard_positive_multiplier,
     )
-    model = ExtraTreesClassifier(
-        n_estimators=max(160, GENERATOR_TREE_ESTIMATORS // 2),
-        min_samples_leaf=max(2, GENERATOR_TREE_MIN_SAMPLES_LEAF),
-        max_features="sqrt",
-        class_weight="balanced",
+    model, model_metadata = _fit_advanced_classifier(
+        train_matrix=train_matrix,
+        train_labels=binary_labels,
+        sample_weights=sample_weights,
         random_state=84,
-        n_jobs=1,
     )
+    if model is None:
+        metadata.update(model_metadata)
+        metadata["class_distribution"] = dict(sorted(counts.items()))
+        return None, metadata
     try:
-        model.fit(train_matrix, binary_labels, sample_weight=sample_weights)
         probabilities = model.predict_proba(train_matrix)
         classes = [str(item) for item in getattr(model, "classes_", [])]
     except Exception as exc:
@@ -5675,7 +6117,8 @@ def _train_generator_binary_gate_artifact(
     threshold_diagnostics["profile_gate_policy"] = gate_policy
     MODEL_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     safe_task = re.sub(r"[^0-9A-Za-z_-]+", "_", GENERATOR_ATTRIBUTION_TASK)
-    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-binary-gate.pkl"
+    model_slug = _model_slug(str(model_metadata.get("model") or "boosted-tree-classifier"))
+    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-{model_slug}-binary-gate.pkl"
     try:
         with path.open("wb") as file:
             pickle.dump(model, file)
@@ -5685,7 +6128,7 @@ def _train_generator_binary_gate_artifact(
         return None, metadata
     return str(path), {
         "enabled": True,
-        "model": "ExtraTreesClassifier",
+        **model_metadata,
         "target": "generated_vs_real",
         "artifact_path": str(path),
         "class_distribution": dict(sorted(counts.items())),
@@ -5693,9 +6136,6 @@ def _train_generator_binary_gate_artifact(
         "threshold_calibration": threshold_diagnostics,
         "real_protection_margin": gate_policy["real_protection_margin"],
         "gate_policy": gate_policy,
-        "n_estimators": max(160, GENERATOR_TREE_ESTIMATORS // 2),
-        "min_samples_leaf": max(2, GENERATOR_TREE_MIN_SAMPLES_LEAF),
-        "class_weight": "balanced",
         "sample_weight_policy": "balanced within generated/real labels across dataset_source groups; boosts real hard-negatives; weak-source generated hard-positive multiplier is retained for ablation and disabled by default",
         "real_weight_multiplier": real_weight_multiplier,
         "hard_negative_multiplier": hard_negative_multiplier,
@@ -5718,7 +6158,7 @@ def _train_gpt_image2_detector_artifact(
 ) -> tuple[str | None, dict[str, object]]:
     metadata: dict[str, object] = {
         "enabled": False,
-        "model": "ExtraTreesClassifier",
+        "model": "AdvancedBoostedTreeClassifier",
         "target": "gpt-image2_vs_rest",
         "threshold": 0.58,
         "reason": "only enabled for gpt_image2_ovr profile",
@@ -5731,27 +6171,22 @@ def _train_gpt_image2_detector_artifact(
         metadata["reason"] = "not enough GPT-image2/rest samples"
         metadata["class_distribution"] = dict(sorted(counts.items()))
         return None, metadata
-    try:
-        from sklearn.ensemble import ExtraTreesClassifier
-    except Exception as exc:
-        metadata["reason"] = f"sklearn import failed: {type(exc).__name__}"
-        metadata["class_distribution"] = dict(sorted(counts.items()))
-        return None, metadata
     train_matrix = [
         _vector_from_normalized(_normalize(rows[index], means, scales), feature_names)
         for index in train_indices
     ]
     sample_weights = _source_balanced_sample_weights(binary_labels, train_indices, source_keys)
-    model = ExtraTreesClassifier(
-        n_estimators=max(220, GENERATOR_TREE_ESTIMATORS),
-        min_samples_leaf=max(2, GENERATOR_TREE_MIN_SAMPLES_LEAF),
-        max_features="sqrt",
-        class_weight="balanced",
+    model, model_metadata = _fit_advanced_classifier(
+        train_matrix=train_matrix,
+        train_labels=binary_labels,
+        sample_weights=sample_weights,
         random_state=126,
-        n_jobs=1,
     )
+    if model is None:
+        metadata.update(model_metadata)
+        metadata["class_distribution"] = dict(sorted(counts.items()))
+        return None, metadata
     try:
-        model.fit(train_matrix, binary_labels, sample_weight=sample_weights)
         probabilities = model.predict_proba(train_matrix)
         classes = [str(item) for item in getattr(model, "classes_", [])]
     except Exception as exc:
@@ -5779,7 +6214,8 @@ def _train_gpt_image2_detector_artifact(
     )
     MODEL_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     safe_task = re.sub(r"[^0-9A-Za-z_-]+", "_", GENERATOR_ATTRIBUTION_TASK)
-    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-gpt-image2-detector.pkl"
+    model_slug = _model_slug(str(model_metadata.get("model") or "boosted-tree-classifier"))
+    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-{model_slug}-gpt-image2-detector.pkl"
     try:
         with path.open("wb") as file:
             pickle.dump(model, file)
@@ -5789,13 +6225,12 @@ def _train_gpt_image2_detector_artifact(
         return None, metadata
     return str(path), {
         "enabled": True,
-        "model": "ExtraTreesClassifier",
+        **model_metadata,
         "target": "gpt-image2_vs_rest",
         "artifact_path": str(path),
         "class_distribution": dict(sorted(counts.items())),
         "threshold": threshold,
         "threshold_calibration": threshold_diagnostics,
-        "class_weight": "balanced",
         "sample_weight_policy": "balanced within GPT/rest labels across dataset_source groups",
         "feature_count": len(feature_names),
         "note": "GPT-image2 专项二元检测器先判断疑似 GPT-image2，再由 generated/real gate 保护真实图误报。",
@@ -5907,6 +6342,12 @@ def _generator_binary_gate_policy(experiment_profile: str) -> dict[str, float | 
     )
 
 
+def _binary_gate_mode_for_profile(experiment_profile: str) -> str:
+    if experiment_profile == "standard_attribution":
+        return "advisory"
+    return "enforce"
+
+
 def _generator_binary_gate_oof_probabilities(
     *,
     rows: list[dict[str, float]],
@@ -5927,12 +6368,6 @@ def _generator_binary_gate_oof_probabilities(
     if source_keys is None or len(source_keys) < len(train_indices):
         diagnostics["reason"] = "source keys unavailable"
         return [], [], diagnostics
-    try:
-        from sklearn.ensemble import ExtraTreesClassifier
-    except Exception as exc:
-        diagnostics["reason"] = f"sklearn import failed: {type(exc).__name__}"
-        return [], [], diagnostics
-
     binary_labels = [_binary_generation_label(labels[index]) for index in train_indices]
     local_source_keys = [
         source_keys[position] if position < len(source_keys) else "__unknown_source__"
@@ -5976,16 +6411,16 @@ def _generator_binary_gate_oof_probabilities(
             hard_negative_multiplier=hard_negative_multiplier,
             generated_hard_positive_multiplier=generated_hard_positive_multiplier,
         )
-        model = ExtraTreesClassifier(
-            n_estimators=max(120, GENERATOR_TREE_ESTIMATORS // 3),
-            min_samples_leaf=max(2, GENERATOR_TREE_MIN_SAMPLES_LEAF),
-            max_features="sqrt",
-            class_weight="balanced",
+        model, _ = _fit_advanced_classifier(
+            train_matrix=train_matrix,
+            train_labels=local_train_labels,
+            sample_weights=fold_weights,
             random_state=184,
-            n_jobs=1,
         )
+        if model is None:
+            skipped_sources.append(source_key)
+            continue
         try:
-            model.fit(train_matrix, local_train_labels, sample_weight=fold_weights)
             probabilities = model.predict_proba(holdout_matrix)
             classes = [str(item) for item in getattr(model, "classes_", [])]
         except Exception:
@@ -6257,6 +6692,7 @@ def _apply_generator_binary_gate(
     *,
     generated_gate_threshold: float,
     real_protection_margin: float,
+    binary_gate_mode: str = "enforce",
 ) -> dict[str, object]:
     if gate is None:
         return prediction
@@ -6272,6 +6708,11 @@ def _apply_generator_binary_gate(
         raw_label=raw_label,
     )
     prediction["binary_gate"] = gate
+    prediction["binary_gate_mode"] = binary_gate_mode
+    if binary_gate_mode == "advisory":
+        prediction["binary_gate_reason"] = "binary_gate_advisory_only"
+        prediction.setdefault("gate_reason", "binary_gate_advisory_only")
+        return prediction
     if (
         raw_label == "real"
         and generated_probability >= generated_gate_threshold + real_protection_margin
@@ -6303,6 +6744,76 @@ def _apply_generator_binary_gate(
         prediction["gate_reason"] = "binary_gate_below_generated_threshold_real_guard"
         return prediction
     prediction["confidence"] = round(min(float(prediction.get("confidence", 0.0)), generated_probability), 3)
+    return prediction
+
+
+def _real_photo_guard_score(features: dict[str, float]) -> float:
+    megapixels = float(features.get("image_megapixels", 0.0) or 0.0)
+    jpg = float(features.get("jpg_ext", 0.0) or 0.0)
+    luma_std = float(features.get("pixel_luma_std", 0.0) or 0.0)
+    saturation_mean = float(features.get("pixel_saturation_mean", 0.0) or 0.0)
+    saturation_std = float(features.get("pixel_saturation_std", 0.0) or 0.0)
+    edge_density = float(features.get("edge_density", 0.0) or 0.0)
+    texture_std = float(features.get("texture_residual_std", 0.0) or 0.0)
+    compression_std = float(features.get("compression_residual_std", 0.0) or 0.0)
+    text_overlay = float(features.get("text_overlay_edge_density", 0.0) or 0.0)
+    score = 0.0
+    score += 0.26 if megapixels >= 3.0 else 0.12 if megapixels >= 1.2 else 0.0
+    score += 0.12 if jpg >= 0.5 else 0.0
+    score += 0.12 if 0.22 <= luma_std <= 0.75 else 0.0
+    score += 0.12 if 0.08 <= saturation_mean <= 0.52 else 0.0
+    score += 0.10 if saturation_std >= 0.22 else 0.0
+    score += 0.10 if 0.12 <= edge_density <= 0.36 else 0.0
+    score += 0.08 if 0.04 <= texture_std <= 0.16 else 0.0
+    score += 0.06 if 0.015 <= compression_std <= 0.07 else 0.0
+    score -= 0.12 if text_overlay >= 0.55 else 0.0
+    return round(max(0.0, min(score, 1.0)), 3)
+
+
+def _apply_real_photo_guard(
+    prediction: dict[str, object],
+    features: dict[str, float],
+) -> dict[str, object]:
+    guard_score = _real_photo_guard_score(features)
+    prediction["real_photo_guard"] = {
+        "score": guard_score,
+        "policy": "high-resolution natural-photo proxy; auxiliary guard only",
+    }
+    if guard_score < 0.72 or str(prediction.get("raw_label") or prediction.get("label")) == "gpt-image2":
+        return prediction
+    candidates = prediction.get("candidates")
+    if not isinstance(candidates, list):
+        return prediction
+    updated: list[dict[str, object]] = []
+    has_real = False
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "unknown")
+        confidence = float(item.get("confidence", 0.0) or 0.0)
+        if label == "real":
+            confidence = max(confidence, min(0.82, guard_score))
+            has_real = True
+        elif label == "other-generated":
+            confidence = min(confidence, max(0.05, 1.0 - guard_score))
+        updated.append({**item, "confidence": round(confidence, 3)})
+    if not has_real:
+        updated.append({"label": "real", "confidence": round(min(0.82, guard_score), 3), "distance": None})
+    updated = sorted(updated, key=lambda item: float(item.get("confidence", 0.0) or 0.0), reverse=True)
+    total = sum(float(item.get("confidence", 0.0) or 0.0) for item in updated)
+    if total > 0:
+        updated = [
+            {**item, "confidence": round(float(item.get("confidence", 0.0) or 0.0) / total, 3)}
+            for item in updated
+        ]
+        updated = sorted(updated, key=lambda item: float(item.get("confidence", 0.0) or 0.0), reverse=True)
+    prediction["candidates"] = updated[:5]
+    top = updated[0]
+    if str(top.get("label")) == "real":
+        prediction["label"] = "real"
+        prediction["raw_label"] = str(prediction.get("raw_label") or "real")
+        prediction["confidence"] = float(top.get("confidence", 0.0) or 0.0)
+        prediction["gate_reason"] = "real_photo_guard_high_resolution_natural_photo"
     return prediction
 
 
@@ -6390,7 +6901,7 @@ def _predict_generator_with_classifier(
         "distance": None,
         "candidates": candidates,
         "prototype": {"label": best_label, "sample_count": 0},
-        "model": "ExtraTreesClassifier",
+        "model": type(model).__name__,
     }
 
 
@@ -6449,6 +6960,7 @@ def _predict_generator_label(
     gpt_detector_threshold: float = GENERATOR_ATTRIBUTION_CONFIDENCE_FLOOR,
     real_protection_margin: float = GENERATOR_REAL_PROTECTION_MARGIN,
     open_set_min_margin: float = 0.0,
+    binary_gate_mode: str = "enforce",
 ) -> dict[str, object]:
     normalized = _normalize(features, means, scales)
     binary_gate = _predict_generated_probability_with_gate(binary_gate_path, normalized, feature_names)
@@ -6492,15 +7004,18 @@ def _predict_generator_label(
             binary_gate,
             generated_gate_threshold=generated_gate_threshold,
             real_protection_margin=real_protection_margin,
+            binary_gate_mode=binary_gate_mode,
         )
     if classifier_prediction is not None:
         if gpt_detector is not None:
             classifier_prediction["gpt_image2_detector"] = gpt_detector
+        classifier_prediction = _apply_real_photo_guard(classifier_prediction, features)
         return _apply_generator_binary_gate(
             classifier_prediction,
             binary_gate,
             generated_gate_threshold=generated_gate_threshold,
             real_protection_margin=real_protection_margin,
+            binary_gate_mode=binary_gate_mode,
         )
     distances: list[tuple[str, float, dict[str, object]]] = []
     for prototype in prototypes:
@@ -6556,7 +7071,7 @@ def _predict_generator_label(
     if best_label not in {"real", "unknown"} and margin < open_set_min_margin:
         final_label = "unknown"
         unknown_reasons.append("low_top2_margin")
-    return _apply_generator_binary_gate(
+    prototype_prediction = _apply_real_photo_guard(
         {
             "label": final_label,
             "raw_label": best_label,
@@ -6567,9 +7082,14 @@ def _predict_generator_label(
             "candidates": candidates[:5],
             "prototype": best_prototype,
         },
+        features,
+    )
+    return _apply_generator_binary_gate(
+        prototype_prediction,
         binary_gate,
         generated_gate_threshold=generated_gate_threshold,
         real_protection_margin=real_protection_margin,
+        binary_gate_mode=binary_gate_mode,
     )
 
 
@@ -6624,6 +7144,7 @@ def _select_ensemble(
     scales: dict[str, float],
     prototypes: list[dict[str, object]],
     tree_artifact_path: str | None,
+    tree_metadata: dict[str, object] | None = None,
 ) -> dict[str, object]:
     train_labels = [labels[index] for index in train_indices]
     valid_labels = [labels[index] for index in valid_indices]
@@ -6709,6 +7230,7 @@ def _select_ensemble(
                 "train_predictions": tree_train,
                 "valid_predictions": tree_valid,
                 "validation_mae": _mae(tree_valid, valid_labels),
+                "tree_metadata": tree_metadata or {},
             }
         )
         if prototypes:
@@ -6745,6 +7267,7 @@ def _select_ensemble(
                             "train_predictions": ensemble_train,
                             "valid_predictions": ensemble_valid,
                             "validation_mae": _mae(ensemble_valid, valid_labels),
+                            "tree_metadata": tree_metadata or {},
                         }
                     )
     clip_prototypes = _build_clip_prototypes(samples, train_indices)
@@ -6788,6 +7311,7 @@ def _select_ensemble(
         "prototype_count": len(prototypes),
         "clip_prototype_count": len(clip_prototypes),
         "tree_available": tree_train is not None and tree_valid is not None,
+        "tree_model": tree_metadata or {},
         "ridge_validation_mae": candidates[0]["validation_mae"],
         "best_validation_mae": best["validation_mae"],
         "candidates": [
@@ -6806,6 +7330,7 @@ def _select_ensemble(
         "knn_k": int(best["knn_k"]),
         "train_predictions": list(best["train_predictions"]),
         "valid_predictions": list(best["valid_predictions"]),
+        "tree_metadata": best.get("tree_metadata", tree_metadata or {}),
         "selection_report": selection_report,
     }
 
@@ -6910,38 +7435,31 @@ def _train_tree_artifact(
     feature_names: list[str],
     means: dict[str, float],
     scales: dict[str, float],
-) -> str | None:
-    try:
-        from sklearn.ensemble import ExtraTreesRegressor
-    except Exception:
-        return None
+) -> tuple[str | None, dict[str, object]]:
     if len(train_indices) < 8:
-        return None
+        return None, {"enabled": False, "model": "AdvancedBoostedTreeRegressor", "reason": "not enough samples"}
     train_matrix = [
         _vector_from_normalized(_normalize(rows[index], means, scales), feature_names)
         for index in train_indices
     ]
     train_labels = [labels[index] for index in train_indices]
-    model = ExtraTreesRegressor(
-        n_estimators=160,
-        min_samples_leaf=2,
-        max_features="sqrt",
+    model, metadata = _fit_advanced_regressor(
+        train_matrix=train_matrix,
+        train_labels=train_labels,
         random_state=42,
-        n_jobs=1,
     )
-    try:
-        model.fit(train_matrix, train_labels)
-    except Exception:
-        return None
+    if model is None:
+        return None, metadata
     MODEL_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     safe_task = re.sub(r"[^0-9A-Za-z_-]+", "_", task_type)
-    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-extratrees.pkl"
+    model_slug = _model_slug(str(metadata.get("model") or "boosted-tree-regressor"))
+    path = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-{model_slug}.pkl"
     try:
         with path.open("wb") as file:
             pickle.dump(model, file)
-    except OSError:
-        return None
-    return str(path)
+    except OSError as exc:
+        return None, {**metadata, "enabled": False, "reason": f"persist failed: {type(exc).__name__}"}
+    return str(path), {**metadata, "enabled": True, "artifact_path": str(path)}
 
 
 def _finalize_tree_artifact(path_text: str | None, run_id: str, task_type: str) -> str | None:
@@ -6951,7 +7469,9 @@ def _finalize_tree_artifact(path_text: str | None, run_id: str, task_type: str) 
     if not source.exists():
         return None
     safe_task = re.sub(r"[^0-9A-Za-z_-]+", "_", task_type)
-    target = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-extratrees.pkl"
+    slug_match = re.search(r"-(xgboostregressor|catboostregressor|boosted-tree-regressor)\.pkl$", source.name)
+    slug = slug_match.group(1) if slug_match else "boosted-tree-regressor"
+    target = MODEL_ARTIFACT_DIR / f"{safe_task}-{run_id}-{slug}.pkl"
     if source == target:
         return str(target)
     try:
@@ -7168,7 +7688,7 @@ def _confusion_matrix(predictions: list[float], labels: list[int]) -> dict[str, 
 
 
 def _classification_metrics(predictions: list[str], labels: list[str]) -> dict[str, object]:
-    classes = sorted(set(labels) | set(predictions) | {"unknown"})
+    classes = sorted(set(labels) | set(predictions))
     matrix = {actual: {predicted: 0 for predicted in classes} for actual in classes}
     for prediction, label in zip(predictions, labels):
         matrix.setdefault(label, {predicted: 0 for predicted in classes})
@@ -7192,7 +7712,8 @@ def _classification_metrics(predictions: list[str], labels: list[str]) -> dict[s
         precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
         recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0.0
         f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-        f1_values.append(f1)
+        if sum(matrix.get(class_name, {}).values()) > 0:
+            f1_values.append(f1)
         per_class[class_name] = {
             "precision": round(precision, 3),
             "recall": round(recall, 3),

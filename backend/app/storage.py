@@ -623,6 +623,42 @@ def save_external_training_samples(samples: list[ExternalTrainingSample]) -> int
     return len(filtered)
 
 
+def delete_external_training_samples_by_source_patterns(
+    *,
+    task_type: str,
+    patterns: list[str],
+) -> int:
+    initialize_database()
+    cleaned_patterns = [pattern.strip().lower() for pattern in patterns if pattern.strip()]
+    if not cleaned_patterns:
+        return 0
+    clauses = []
+    params: list[object] = []
+    for pattern in cleaned_patterns:
+        like_pattern = f"%{pattern}%"
+        clauses.append(
+            """
+            (
+                lower(dataset_name) LIKE ?
+                OR lower(source) LIKE ?
+                OR lower(coalesce(source_url, '')) LIKE ?
+                OR lower(label) LIKE ?
+            )
+            """
+        )
+        params.extend([like_pattern, like_pattern, like_pattern, like_pattern])
+    with sqlite3.connect(DB_PATH) as connection:
+        cursor = connection.execute(
+            f"""
+            DELETE FROM external_training_samples
+            WHERE task_type = ? AND ({' OR '.join(clauses)})
+            """,
+            (task_type, *params),
+        )
+        connection.commit()
+        return int(cursor.rowcount if cursor.rowcount is not None else 0)
+
+
 def list_external_training_samples(
     limit: int = 10000,
     dataset_name: str | None = None,
@@ -1968,36 +2004,27 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
             str(Path(__file__).resolve().parents[1] / "data"),
         )
     )
+    source_root = data_root / "tamper_demo_sources"
     specs = {
         "tamper-demo-order-after-sale-001": {
             "asset_id": "asset-tamper-demo-order",
-            "filename": "tamper-demo-order-after-sale.png",
-            "kind": "order",
-            "title": "售后服务单",
-            "accent": (28, 112, 86),
-            "legacy_filenames": ["tamper-demo-disaster-material.jpg"],
+            "filename": "tamper-demo-order-after-sale.jpg",
+            "source_stem": "tamper-demo-order-after-sale",
+            "legacy_filenames": ["tamper-demo-order-after-sale.png", "tamper-demo-disaster-material.jpg"],
         },
         "tamper-demo-bank-transfer-001": {
             "asset_id": "asset-tamper-demo-bank",
-            "filename": "tamper-demo-bank-transfer.png",
-            "kind": "bank",
-            "title": "电子转账回单",
-            "accent": (42, 98, 176),
-            "legacy_filenames": ["tamper-demo-old-image-screenshot.jpg"],
+            "filename": "tamper-demo-bank-transfer.jpg",
+            "source_stem": "tamper-demo-bank-transfer",
+            "legacy_filenames": ["tamper-demo-bank-transfer.png", "tamper-demo-old-image-screenshot.jpg"],
         },
         "tamper-demo-medical-complaint-001": {
             "asset_id": "asset-tamper-demo-medical",
-            "filename": "tamper-demo-medical-complaint.png",
-            "kind": "complaint",
-            "title": "投诉材料附件",
-            "accent": (128, 92, 42),
-            "legacy_filenames": ["tamper-demo-public-order-screenshot.png"],
+            "filename": "tamper-demo-medical-complaint.jpg",
+            "source_stem": "tamper-demo-medical-complaint",
+            "legacy_filenames": ["tamper-demo-medical-complaint.png", "tamper-demo-public-order-screenshot.png"],
         },
     }
-    font_regular = _load_demo_font(22, bold=False)
-    font_medium = _load_demo_font(26, bold=True)
-    font_large = _load_demo_font(36, bold=True)
-    font_small = _load_demo_font(18, bold=False)
     for case in TAMPER_DEMO_CASES:
         spec = specs[case.id]
         deleted = connection.execute(
@@ -2018,20 +2045,51 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
             legacy_path = case_dir / str(legacy_name)
             if legacy_path.exists() and legacy_path.is_file():
                 legacy_path.unlink()
+        source_path = _tamper_demo_source_path(source_root, str(spec["source_stem"]))
+        if source_path is None:
+            connection.execute(
+                "DELETE FROM case_assets WHERE id = ? OR case_id = ?",
+                (spec["asset_id"], case.id),
+            )
+            connection.execute(
+                "DELETE FROM tamper_forensics_runs WHERE case_id = ?",
+                (case.id,),
+            )
+            continue
         image_path = case_dir / str(spec["filename"])
-        image = _draw_tamper_demo_image(
-            kind=str(spec["kind"]),
-            title=str(spec["title"]),
-            accent=tuple(spec["accent"]),
-            fonts={
-                "regular": font_regular,
-                "medium": font_medium,
-                "large": font_large,
-                "small": font_small,
-            },
-        )
-        image.save(image_path, format="PNG")
-        raw = image_path.read_bytes()
+        try:
+            source_raw = source_path.read_bytes()
+            source_digest = sha256(source_raw).hexdigest()
+            existing_asset = connection.execute(
+                """
+                SELECT sha256, storage_path
+                FROM case_assets
+                WHERE id = ? AND case_id = ?
+                """,
+                (spec["asset_id"], case.id),
+            ).fetchone()
+            if (
+                existing_asset is not None
+                and str(existing_asset[0]) == source_digest
+                and Path(str(existing_asset[1])).is_file()
+                and Path(str(existing_asset[1])).resolve() == image_path.resolve()
+            ):
+                continue
+            image_path.write_bytes(source_raw)
+            raw = source_raw
+            with Image.open(image_path) as image:
+                width, height = image.size
+                content_type = _content_type_for_path(image_path)
+        except OSError:
+            connection.execute(
+                "DELETE FROM case_assets WHERE id = ? OR case_id = ?",
+                (spec["asset_id"], case.id),
+            )
+            connection.execute(
+                "DELETE FROM tamper_forensics_runs WHERE case_id = ?",
+                (case.id,),
+            )
+            continue
         digest = sha256(raw).hexdigest()
         created_at = datetime.now(UTC).isoformat()
         relative_path = image_path.resolve().relative_to(data_root.resolve())
@@ -2056,10 +2114,10 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
                 spec["asset_id"],
                 case.id,
                 spec["filename"],
-                "image/png",
+                content_type,
                 len(raw),
-                image.width,
-                image.height,
+                width,
+                height,
                 digest,
                 str(image_path),
                 f"/evidence/files/{str(relative_path).replace(chr(92), '/')}",
@@ -2072,6 +2130,14 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
         )
 
 
+def _tamper_demo_source_path(source_root: Path, stem: str) -> Path | None:
+    for suffix in (".png", ".jpg", ".jpeg", ".webp"):
+        candidate = source_root / f"{stem}{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _content_type_for_path(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".jpg", ".jpeg"}:
@@ -2081,114 +2147,6 @@ def _content_type_for_path(path: Path) -> str:
     if suffix == ".webp":
         return "image/webp"
     return "application/octet-stream"
-
-
-def _load_demo_font(size: int, *, bold: bool) -> object:
-    try:
-        from PIL import ImageFont
-    except ImportError:  # pragma: no cover
-        raise
-    candidates = [
-        Path("C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc"),
-        Path("C:/Windows/Fonts/Noto Sans SC Bold (TrueType).otf" if bold else "C:/Windows/Fonts/Noto Sans SC (TrueType).otf"),
-        Path("C:/Windows/Fonts/simhei.ttf"),
-        Path("C:/Windows/Fonts/simsun.ttc"),
-    ]
-    for path in candidates:
-        if path.exists():
-            try:
-                return ImageFont.truetype(str(path), size)
-            except OSError:
-                continue
-    return ImageFont.load_default()
-
-
-def _draw_tamper_demo_image(
-    *,
-    kind: str,
-    title: str,
-    accent: tuple[int, int, int],
-    fonts: dict[str, object],
-) -> object:
-    from PIL import Image, ImageDraw
-
-    image = Image.new("RGB", (900, 620), (236, 239, 234))
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, 900, 620), fill=(236, 239, 234))
-    draw.rectangle((54, 34, 846, 586), fill=(255, 255, 250), outline=(205, 213, 207), width=2)
-    draw.rectangle((54, 34, 846, 100), fill=accent)
-    draw.text((86, 54), title, fill=(255, 255, 255), font=fonts["large"])
-    draw.text((650, 64), "脱敏演示样例", fill=(230, 244, 238), font=fonts["small"])
-    draw.line((86, 126, 814, 126), fill=(218, 224, 219), width=2)
-
-    if kind == "order":
-        _draw_form_rows(
-            draw,
-            fonts,
-            [
-                ("订单编号", "SP20260618-0831-****", "申请时间", "2026-06-18 08:42"),
-                ("商品名称", "智能家居配件套装", "售后类型", "仅退款"),
-                ("订单金额", "388.00 元", "退款状态", "已通过"),
-                ("收件人", "王*（脱敏）", "联系方式", "138****9271"),
-                ("客服备注", "用户称商品未收到，需核验物流签收记录", "", ""),
-            ],
-            start_y=154,
-        )
-        _draw_subtle_overlay(draw, fonts, (620, 203, 726, 238), "仅退款")
-    elif kind == "bank":
-        _draw_form_rows(
-            draw,
-            fonts,
-            [
-                ("付款账户", "6222 **** **** 1936", "收款账户", "6217 **** **** 8021"),
-                ("收款户名", "陈*（脱敏）", "交易日期", "2026-06-18"),
-                ("交易金额", "98,600.00 元", "交易状态", "处理成功"),
-                ("流水号", "EBK20260618****3917", "用途", "材料款"),
-                ("回单说明", "本回单为演示样例，不代表真实银行流水", "", ""),
-            ],
-            start_y=154,
-        )
-        draw.ellipse((612, 386, 778, 514), outline=(206, 70, 70), width=3)
-        draw.text((632, 436), "电子回单章", fill=(184, 50, 50), font=fonts["medium"])
-        _draw_subtle_overlay(draw, fonts, (626, 211, 764, 246), "2026-06-18")
-    else:
-        _draw_form_rows(
-            draw,
-            fonts,
-            [
-                ("材料类型", "医疗/餐饮投诉附件", "提交时间", "2026-06-18 09:10"),
-                ("机构名称", "某门店/机构（脱敏）", "单据编号", "TS-20260618-****"),
-                ("投诉金额", "1,260.00 元", "项目名称", "服务费用"),
-                ("现场说明", "图片拼图包含票据和现场局部照片", "处理状态", "待核验"),
-                ("备注", "需调取原始单据、平台记录和现场核查材料", "", ""),
-            ],
-            start_y=154,
-        )
-        draw.rectangle((590, 360, 770, 514), fill=(238, 242, 238), outline=(190, 198, 190), width=2)
-        draw.text((612, 414), "现场图区域", fill=(90, 98, 92), font=fonts["medium"])
-        _draw_subtle_overlay(draw, fonts, (624, 188, 814, 226), "TS-20260618-****")
-    draw.text((86, 548), "说明：本图为系统内置脱敏演示材料，无真实姓名、账号、订单号或联系方式。", fill=(98, 108, 102), font=fonts["small"])
-    return image
-
-
-def _draw_form_rows(draw: object, fonts: dict[str, object], rows: list[tuple[str, str, str, str]], *, start_y: int) -> None:
-    y = start_y
-    for left_label, left_value, right_label, right_value in rows:
-        draw.rectangle((86, y - 10, 814, y + 38), fill=(250, 251, 248), outline=(226, 231, 226))
-        draw.text((108, y), left_label, fill=(92, 103, 96), font=fonts["small"])
-        draw.text((218, y - 3), left_value, fill=(28, 36, 32), font=fonts["regular"])
-        if right_label:
-            draw.line((492, y - 10, 492, y + 38), fill=(226, 231, 226), width=1)
-            draw.text((514, y), right_label, fill=(92, 103, 96), font=fonts["small"])
-            draw.text((626, y - 3), right_value, fill=(28, 36, 32), font=fonts["regular"])
-        y += 58
-
-
-def _draw_subtle_overlay(draw: object, fonts: dict[str, object], box: tuple[int, int, int, int], text: str) -> None:
-    x1, y1, x2, y2 = box
-    draw.rectangle((x1 - 4, y1 - 3, x2 + 5, y2 + 4), fill=(252, 250, 244), outline=(236, 230, 218))
-    draw.text((x1, y1), text, fill=(18, 24, 22), font=fonts["medium"])
-    draw.line((x1 - 2, y2 + 3, x2 + 2, y2 + 3), fill=(232, 222, 206), width=1)
 
 
 def _case_id(payload: CaseCreateRequest) -> str:
@@ -2487,19 +2445,19 @@ def _recommended_huggingface_datasets(task_type: str | None = None) -> list[dict
     if task_type == "vision_tamper":
         return [
             {
-                "name": "CASIA Image Tampering Detection Evaluation Database",
-                "url": "https://github.com/namtpham/casia2groundtruth",
-                "reason": "局部拼接/复制移动篡改方向，可作为后续篡改定位候选实验的数据源参考；需核验许可与 mask/bbox 可用性。",
+                "name": "lorenzo-morelli/image-splicing-deepfake-mix",
+                "url": "https://huggingface.co/datasets/lorenzo-morelli/image-splicing-deepfake-mix",
+                "reason": "当前篡改线已使用的 HF 拼接/插入篡改图像池，包含 authentic_unmodified 与 splicing_tampered 标签；用于通用篡改证据头训练，不宣称单据类定位 benchmark。",
             },
             {
-                "name": "IMD2020 Image Manipulation Dataset",
-                "url": "https://staff.utia.cas.cz/novozada/db/",
-                "reason": "图像篡改检测与定位数据集，适合验证局部篡改候选区域；导入前需单独确认下载许可和标注格式。",
+                "name": "AdoCleanCode/Fakeddit manipulated content subset",
+                "url": "https://huggingface.co/datasets/AdoCleanCode/Fakeddit",
+                "reason": "当前篡改线已使用其中 manipulated content / negative true 图像样本，作为通用篡改/非篡改监督补充；不能作为单据/凭证专属数据集宣称。",
             },
             {
-                "name": "AutoSplice / document or receipt tamper subsets",
+                "name": "CASIA / IMD2020 / AutoSplice document-tamper follow-up",
                 "url": "https://huggingface.co/datasets?search=image%20tampering",
-                "reason": "用于检索篡改任务自己的公开/HF 数据源；只允许导入 tamper/splice/inpaint/copy-move/document-tamper 相关样本，不能混用生成检测数据。",
+                "reason": "下一步检索并导入篡改任务自己的 mask/bbox 或 document-tamper 数据；只允许 tamper/splice/inpaint/copy-move/document-tamper，不混用生成检测数据。",
             },
         ]
     return [

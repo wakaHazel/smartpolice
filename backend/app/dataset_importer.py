@@ -74,6 +74,42 @@ GENERATED_SOURCE_HINTS = {
     "imagegbt",
 }
 REAL_SOURCE_HINTS = {"real", "authentic", "photo", "camera", "真实", "照片", "实拍"}
+TAMPER_TASK = "vision_tamper"
+TAMPER_SOURCE_HINTS = {
+    "tamper",
+    "tampered",
+    "manipulated",
+    "manipulation",
+    "splicing",
+    "splice",
+    "forgery",
+    "copy-move",
+    "copy move",
+    "inpaint",
+    "casia",
+    "imd2020",
+    "autosplice",
+    "篡改",
+    "拼接",
+    "伪造",
+    "修补",
+}
+TAMPER_FORBIDDEN_GENERATOR_HINTS = {
+    "tiny-genimage",
+    "genimage",
+    "gpt-image",
+    "gpt_image",
+    "midjourney",
+    "stable diffusion",
+    "stable-diffusion",
+    "sdxl",
+    "flux",
+    "dall-e",
+    "dalle",
+    "seedream",
+    "nano banana",
+    "qwen-image",
+}
 
 
 def import_external_dataset(
@@ -127,6 +163,31 @@ def _validate_payload(payload: ExternalDatasetImportRequest) -> None:
             raise ValueError(
                 f"{task_type} 需要提供 image_root 与 image_path_column，系统只读取本地图片，不自动批量爬取远程图片。"
             )
+    _validate_task_dataset_boundary(payload)
+
+
+def _validate_task_dataset_boundary(payload: ExternalDatasetImportRequest) -> None:
+    task_type = payload.task_type.strip()
+    signature = " ".join(
+        [
+            payload.dataset_name,
+            payload.source,
+            payload.source_url or "",
+            payload.split,
+            *[str(row.get(payload.label_column) or "") for row in payload.rows[:20]],
+        ]
+    ).lower()
+    if task_type == TAMPER_TASK:
+        if any(hint in signature for hint in TAMPER_FORBIDDEN_GENERATOR_HINTS):
+            raise ValueError(
+                "vision_tamper 只能导入篡改/拼接/修补/伪造相关数据集；检测到生成检测数据源标记，已拒绝导入。"
+            )
+        if payload.rows and not any(hint in signature for hint in TAMPER_SOURCE_HINTS | REAL_SOURCE_HINTS):
+            raise ValueError(
+                "vision_tamper 数据源需要在 dataset/source/label 中标明 tamper、splicing、manipulated、authentic 等篡改任务语义。"
+            )
+    if task_type == GENERATOR_ATTRIBUTION_TASK and any(hint in signature for hint in TAMPER_SOURCE_HINTS):
+        raise ValueError("vision_generator_attribution 不能导入篡改/拼接数据源；请改用 vision_tamper。")
 
 
 def _load_rows(payload: ExternalDatasetImportRequest) -> list[dict[str, object]]:

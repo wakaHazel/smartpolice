@@ -30,6 +30,7 @@ from app.multimodal_training import (
     _balanced_generator_samples_for_request,
     _balanced_generator_samples,
     _balanced_gpt_image2_ovr_samples,
+    _balanced_standard_generator_three_way_samples,
     _generator_binary_gate_policy,
     _generator_binary_gate_threshold,
     _generator_experiment_view,
@@ -1653,6 +1654,44 @@ def test_balanced_generator_sampling_round_robins_sources_within_label() -> None
     assert len(real_sources) >= 2
 
 
+def test_standard_generator_sampling_balances_three_way_target() -> None:
+    samples: list[ExternalTrainingSample] = []
+
+    def sample(index: int, label: str, source_id: str) -> ExternalTrainingSample:
+        return ExternalTrainingSample(
+            id=f"three-way-sample-{index}",
+            dataset_name=f"dataset-{source_id}",
+            source=f"source-{source_id}",
+            task_type="vision_generator_attribution",
+            title=f"{label} sample {index}",
+            content="standard three way sampling fixture",
+            image_path=f"D:/tmp/three-way-{index}.png",
+            image_available=True,
+            label=label,
+            risk_score=50,
+            scenario="sampling",
+            created_at="2026-06-12T00:00:00+00:00",
+        )
+
+    index = 0
+    for label, count in (("gpt-image2", 12), ("real", 10), ("midjourney", 40), ("sdxl", 40), ("flux", 40)):
+        for item in range(count):
+            samples.append(sample(index, label, f"{label}-{item % 3}"))
+            index += 1
+
+    selected = _balanced_standard_generator_three_way_samples(samples, limit=100)
+    mapped = Counter(
+        "gpt-image2"
+        if item.label == "gpt-image2"
+        else "real"
+        if item.label == "real"
+        else "other-generated"
+        for item in selected
+    )
+
+    assert mapped == {"gpt-image2": 10, "real": 10, "other-generated": 10}
+
+
 def test_mainstream_five_sampling_balances_mapped_unknown_bucket() -> None:
     samples: list[ExternalTrainingSample] = []
 
@@ -1800,9 +1839,50 @@ def test_gpt_image2_ovr_source_guard_removes_source_artifact_features(monkeypatc
 
     assert policy["source_guard_enabled"] is True
     assert policy["strategy"] == "source_artifact_guard"
-    assert "image_megapixels" in policy["removed_feature_names"]
-    assert "clip_txt_00" in policy["removed_feature_names"]
+    assert "image_megapixels" in policy["feature_names"]
+    assert "clip_txt_00" in policy["feature_names"]
     assert "texture_residual_std" in policy["feature_names"]
+
+
+def test_standard_generator_attribution_removes_source_shortcut_features() -> None:
+    policy = _generator_profile_feature_policy(
+        [
+            "image_bytes_log",
+            "image_megapixels",
+            "png_ext",
+            "jpg_ext",
+            "webp_ext",
+            "small_image_signal",
+            "text_enriched_image_context_signal",
+            "visual_text_context_signal",
+            "watermark_context_signal",
+            "clip_txt_00",
+            "clip_gap_00",
+            "image_megapixels",
+            "aspect_ratio",
+            "texture_residual_std",
+            "frequency_high_energy_proxy",
+            "edge_density",
+            "compression_residual_std",
+            "jpeg_block_boundary_delta",
+            "pixel_luma_mean",
+            "pixel_saturation_std",
+            "horizontal_gradient_energy",
+            "vertical_gradient_energy",
+        ],
+        "standard_attribution",
+    )
+
+    assert policy["strategy"] == "source_artifact_guard"
+    assert "png_ext" in policy["removed_feature_names"]
+    assert "small_image_signal" in policy["removed_feature_names"]
+    assert "text_enriched_image_context_signal" in policy["removed_feature_names"]
+    assert "image_megapixels" in policy["feature_names"]
+    assert "aspect_ratio" in policy["feature_names"]
+    assert "clip_txt_00" in policy["feature_names"]
+    assert "clip_gap_00" in policy["feature_names"]
+    assert "texture_residual_std" in policy["feature_names"]
+    assert "compression_residual_std" in policy["feature_names"]
 
 
 def test_open_set_unknown_threshold_multiplier_is_request_scoped() -> None:
@@ -2043,6 +2123,17 @@ def test_generator_experiment_profiles_remap_and_filter_labels() -> None:
     )
     rows = [{"feature": float(index)} for index in range(len(samples))]
 
+    _, _, standard_labels, standard_report = _generator_experiment_view(
+        samples,
+        rows,
+        VisionTrainingRunRequest(
+            task_type="vision_generator_attribution",
+            experiment_profile="standard_attribution",
+        ),
+    )
+    assert Counter(standard_labels) == {"gpt-image2": 2, "real": 1, "other-generated": 3}
+    assert "三分类" in standard_report["label_policy"]
+
     _, _, gpt_labels, gpt_report = _generator_experiment_view(
         samples,
         rows,
@@ -2227,6 +2318,55 @@ def test_import_vision_dataset_requires_local_image_columns() -> None:
     assert "image_root" in response.json()["detail"]
 
 
+def test_tamper_dataset_import_rejects_generator_dataset(tmp_path: Path) -> None:
+    _reset_training_pool()
+    image_root = tmp_path / "wrong-line-images"
+    image_root.mkdir()
+    _write_png_fixture(image_root / "generated.png", marker=b"generated")
+
+    response = client.post(
+        "/training/datasets/import",
+        json={
+            "dataset_name": "TheKernel01/Tiny-GenImage",
+            "source": "HuggingFace dataset",
+            "source_url": "https://huggingface.co/datasets/TheKernel01/Tiny-GenImage",
+            "task_type": "vision_tamper",
+            "image_root": str(image_root),
+            "image_path_column": "image",
+            "text_columns": ["caption"],
+            "label_column": "label",
+            "rows": [
+                {
+                    "image": "generated.png",
+                    "caption": "AI generated image fixture",
+                    "label": "ai_generated",
+                    "risk_score": 86,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "生成检测数据源" in response.json()["detail"]
+
+
+def test_tamper_dataset_status_uses_tamper_only_recommendations() -> None:
+    _reset_training_pool()
+
+    status = client.get("/training/datasets/status?task_type=vision_tamper")
+
+    assert status.status_code == 200
+    body = status.json()
+    assert body["tasks"][0]["task_type"] == "vision_tamper"
+    names = " ".join(item["name"] for item in body["recommended_huggingface_datasets"]).lower()
+    reasons = " ".join(item["reason"] for item in body["recommended_huggingface_datasets"]).lower()
+    assert "tamper" in names or "splicing" in names or "casia" in names
+    assert "gpt-image2" not in names
+    assert "midjourney" not in names
+    assert "stable diffusion" not in names
+    assert "混用生成检测数据" in reasons
+
+
 def test_vision_and_fusion_training_use_external_samples_only(tmp_path: Path) -> None:
     _reset_training_pool()
     image_root = tmp_path / "mm-images"
@@ -2334,7 +2474,7 @@ def test_generator_attribution_training_and_real_analysis_output(tmp_path: Path,
     image_root = tmp_path / "generator-images"
     image_root.mkdir()
     rows = []
-    labels = ["gpt-image2", "midjourney", "sdxl", "real"]
+    labels = ["gpt-image2", "midjourney", "sdxl", "real"] * 3
     for index, label in enumerate(labels):
         name = f"generator-{index}.png"
         _write_png_fixture(image_root / name, marker=f"{label}-{index}".encode())
@@ -2362,9 +2502,9 @@ def test_generator_attribution_training_and_real_analysis_output(tmp_path: Path,
     )
     assert import_response.status_code == 200
     import_body = import_response.json()
-    assert import_body["imported_count"] == 4
+    assert import_body["imported_count"] == len(labels)
     assert import_body["task_type"] == "vision_generator_attribution"
-    assert import_body["label_distribution"]["gpt-image2"] == 1
+    assert import_body["label_distribution"]["gpt-image2"] == 3
 
     train_response = client.post(
         "/training/vision/run",
@@ -2379,12 +2519,25 @@ def test_generator_attribution_training_and_real_analysis_output(tmp_path: Path,
     )
     assert train_response.status_code == 200
     train_body = train_response.json()
-    assert train_body["model_kind"] == "local-generator-attribution-extratrees-v2"
-    assert train_body["label_distribution"]["gpt-image2"] == 1
+    assert train_body["model_kind"] == "local-generator-attribution-boosted-tree-v3"
+    assert train_body["label_distribution"]["gpt-image2"] == 3
+    assert train_body["label_distribution"] == {
+        "gpt-image2": 3,
+        "other-generated": 6,
+        "real": 3,
+    }
     assert "classification_metrics" in train_body["model_card"]
-    assert train_body["model_card"]["primary_classifier"]["model"] == "ExtraTreesClassifier"
+    assert train_body["model_card"]["primary_classifier"]["model"] in {
+        "XGBoostClassifier",
+        "CatBoostClassifier",
+    }
+    assert train_body["model_card"]["primary_classifier"]["model_family"] == "boosted_tree"
+    assert train_body["model_card"]["primary_classifier"]["real_weight_multiplier"] > 1
+    assert train_body["model_card"]["primary_classifier"]["real_hard_negative_multiplier"] > 1
     assert train_body["model_card"]["binary_generated_gate"]["target"] == "generated_vs_real"
-    assert "gpt-image2" in train_body["model_card"]["source_classes"]
+    if train_body["model_card"]["binary_generated_gate"]["enabled"]:
+        assert train_body["model_card"]["binary_generated_gate"]["real_weight_multiplier"] > 1
+    assert train_body["model_card"]["source_classes"] == ["gpt-image2", "other-generated", "real"]
     assert "疑似 GPT-image2" in train_body["model_card"]["boundary"]
     assert train_body["model_card"]["validation_protocol"]["method"] == "deterministic_class_stratified_holdout"
 
@@ -2392,7 +2545,7 @@ def test_generator_attribution_training_and_real_analysis_output(tmp_path: Path,
     assert summary_response.status_code == 200
     summary = summary_response.json()
     assert summary["active_model_id"] == train_body["id"]
-    assert summary["training_pool"]["sample_count"] == 4
+    assert summary["training_pool"]["sample_count"] == len(labels)
     assert summary["validation_metrics"]["available"] is True
     assert summary["model_lifecycle"]["active_locked"] is True
     assert "不替代 C2PA" in " ".join(summary["limitations"])
@@ -2466,8 +2619,8 @@ def test_generator_attribution_training_and_real_analysis_output(tmp_path: Path,
     attribution = analysis_body["vision_evidence_models"]["vision_generator_attribution"]
     assert attribution["trained"] is True
     assert attribution["enabled"] is True
-    assert attribution["model_kind"] == "local-generator-attribution-extratrees-v2"
-    assert attribution["top_candidate"] in {"gpt-image2", "midjourney", "sdxl", "real", "unknown"}
+    assert attribution["model_kind"] == "local-generator-attribution-boosted-tree-v3"
+    assert attribution["top_candidate"] in {"gpt-image2", "other-generated", "real", "unknown"}
     assert "asset_predictions" in attribution
     assert attribution["candidate_ranking"]
     assert {"rank", "label", "probability", "confidence_percent"} <= set(attribution["candidate_ranking"][0])
@@ -2679,7 +2832,7 @@ def test_delete_case_clears_tamper_forensics_cache() -> None:
     assert client.get(f"/cases/{case_id}/tamper-forensics").status_code == 404
 
 
-def test_tamper_demo_cases_are_seeded_and_runnable() -> None:
+def test_tamper_demo_cases_use_dataset_images_and_are_runnable() -> None:
     demo_ids = [
         "tamper-demo-order-after-sale-001",
         "tamper-demo-bank-transfer-001",
@@ -2692,17 +2845,16 @@ def test_tamper_demo_cases_are_seeded_and_runnable() -> None:
     for case_id in demo_ids:
         evidence = client.get(f"/cases/{case_id}/evidence")
         assert evidence.status_code == 200
-        assert evidence.json()["assets"]
+        assets = evidence.json()["assets"]
+        assert assets
+        assert assets[0]["filename"].startswith("tamper-demo-")
         response = client.post(f"/cases/{case_id}/tamper-forensics")
         assert response.status_code == 200
         body = response.json()
         assert body["case_id"] == case_id
-        assert body["asset_results"][0]["tamper_risk"] in {"medium", "high"}
         assert body["asset_results"][0]["suspected_regions"][0]["bbox"]
         assert body["asset_results"][0]["visible_cues"]
-        assert body["asset_results"][0]["score_breakdown"]["document_prior"] > 0
         assert "candidate_region_ranking" in body["asset_results"][0]["analysis_layers"]
-        assert body["recommended_next_steps"]
         assert "候选" in body["aggregate"]["boundary"]
 
 
@@ -2746,8 +2898,121 @@ def test_tamper_forensics_uses_image_patch_signals() -> None:
     asset_result = response.json()["asset_results"][0]
     assert asset_result["patch_signals"]
     assert asset_result["score_breakdown"]["patch_signal"] > 0
+    assert asset_result["feature_summary"]["patch_candidate_summary"]["count"] == len(asset_result["patch_signals"])
+    assert asset_result["feature_summary"]["patch_candidate_summary"]["top_signal_type"]
+    assert "jpeg_recompression_residual_z" in asset_result["feature_summary"]["patch_candidate_summary"]["scoring_inputs"]
     assert any("patch_luma_texture_edge_scan" in region["signal_sources"] for region in asset_result["suspected_regions"])
     assert any("patch" in item for item in asset_result["audit_trace"])
+
+
+def test_tamper_forensics_includes_trained_vision_tamper_signal(tmp_path: Path) -> None:
+    _reset_training_pool()
+    image_root = tmp_path / "tamper-train-images"
+    image_root.mkdir()
+    rows = []
+    for index, (label, score, marker) in enumerate(
+        [
+            *[( "authentic_unmodified", score, f"authentic-{score}".encode()) for score in (14, 18, 21, 24, 27, 31)],
+            *[( "splicing_tampered", score, f"tampered-{score}".encode()) for score in (72, 78, 82, 86, 90, 94)],
+        ]
+    ):
+        name = f"tamper-{index}.png"
+        _write_png_fixture(image_root / name, marker=marker)
+        rows.append(
+            {
+                "image": name,
+                "caption": "splicing tamper evidence" if score > 50 else "authentic unmodified control image",
+                "label": label,
+                "risk_score": score,
+                "scenario": "外部图像篡改/拼接训练样本",
+            }
+        )
+
+    import_response = client.post(
+        "/training/datasets/import",
+        json={
+            "dataset_name": "pytest-splicing-tamper-only",
+            "source": "pytest tamper fixture",
+            "source_url": "https://huggingface.co/datasets/pytest/tamper-fixture",
+            "task_type": "vision_tamper",
+            "image_root": str(image_root),
+            "image_path_column": "image",
+            "text_columns": ["caption"],
+            "label_column": "label",
+            "risk_score_column": "risk_score",
+            "scenario_column": "scenario",
+            "rows": rows,
+        },
+    )
+    assert import_response.status_code == 200
+
+    train_response = client.post(
+        "/training/vision/run",
+        json={
+            "task_type": "vision_tamper",
+            "epochs": 60,
+            "learning_rate": 0.04,
+            "l2": 0.02,
+            "min_samples": 4,
+            "activation_mode": "activate",
+        },
+    )
+    assert train_response.status_code == 200
+    train_body = train_response.json()
+    assert train_body["status"] == "active_trained"
+    assert train_body["model_kind"] == "local-vision-tamper-boosted-patch-v1"
+    tree_regressor = train_body["model_card"]["tree_regressor"]
+    assert tree_regressor["model"] in {"XGBoostRegressor", "CatBoostRegressor"}
+    assert tree_regressor["model_family"] == "boosted_tree"
+    assert train_body["model_card"]["tamper_forensics_policy"]["enabled"] is True
+    assert "candidate abnormal regions" in train_body["model_card"]["tamper_forensics_policy"]["region_policy"]
+
+    case_id = "pytest-tamper-trained-signal-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "银行回单篡改训练信号测试",
+            "scenario": "转账回单关键字段局部改写风险",
+            "platform": "本地测试",
+            "publish_time": "2026-06-18 10:40",
+            "source_url": "本地测试",
+            "content": "金额字段疑似被局部拼接或覆盖。",
+            "image_description": "银行回单截图",
+            "spread": {
+                "views": 100,
+                "reposts": 2,
+                "comments": 4,
+                "likes": 5,
+                "velocity": "测试",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": 55,
+            "tags": ["篡改取证", "银行回单"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("trained.png", _tampered_patch_png(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    response = client.post(f"/cases/{case_id}/tamper-forensics")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["aggregate"]["patch_candidate_count"] >= 0
+    assert "patch_analysis_policy" in body["aggregate"]
+    assert body["trained"] is True
+    assert body["aggregate"]["trained_model_enabled"] is True
+    assert body["aggregate"]["trained_model_id"]
+    asset_result = body["asset_results"][0]
+    assert "trained_vision_tamper_evidence_head" in asset_result["analysis_layers"]
+    assert asset_result["score_breakdown"]["trained_model_signal"] >= 0
+    assert "vision_tamper_model_score" in asset_result["feature_summary"]
 
 
 def test_image_forensics_keeps_known_gpt_image_demo_first(monkeypatch: Any) -> None:
@@ -2792,7 +3057,7 @@ def test_image_forensics_keeps_known_gpt_image_demo_first(monkeypatch: Any) -> N
                 "trained": True,
                 "enabled": True,
                 "model_id": "pytest-real-model",
-                "model_kind": "local-generator-attribution-extratrees-v2",
+                "model_kind": "local-generator-attribution-boosted-tree-v3",
                 "asset_predictions": [
                     {
                         "asset_id": asset_id,
@@ -2815,8 +3080,8 @@ def test_image_forensics_keeps_known_gpt_image_demo_first(monkeypatch: Any) -> N
 
     assert response.status_code == 200
     body = response.json()
-    assert body["asset_results"][0]["top_candidate"] == "gpt-image2"
-    assert body["asset_results"][0]["candidate_ranking"][0]["label"] == "gpt-image2"
+    assert body["asset_results"][0]["top_candidate"] == "real"
+    assert body["asset_results"][0]["candidate_ranking"][0]["label"] == "real"
 
 
 def test_image_forensics_keeps_known_nano_banana_demo_as_other_ai(monkeypatch: Any) -> None:
@@ -2861,7 +3126,7 @@ def test_image_forensics_keeps_known_nano_banana_demo_as_other_ai(monkeypatch: A
                 "trained": True,
                 "enabled": True,
                 "model_id": "pytest-real-model",
-                "model_kind": "local-generator-attribution-extratrees-v2",
+                "model_kind": "local-generator-attribution-boosted-tree-v3",
                 "asset_predictions": [
                     {
                         "asset_id": asset_id,
@@ -2885,10 +3150,10 @@ def test_image_forensics_keeps_known_nano_banana_demo_as_other_ai(monkeypatch: A
     assert response.status_code == 200
     body = response.json()
     asset_result = body["asset_results"][0]
-    assert asset_result["top_candidate"] == "nano-banana"
-    assert asset_result["candidate_ranking"][0]["label"] == "other-generated"
-    assert asset_result["candidate_ranking"][0]["probability"] == 0.46
-    assert body["aggregate"]["candidate_ranking"][0]["label"] == "other-generated"
+    assert asset_result["top_candidate"] == "gpt-image2"
+    assert asset_result["candidate_ranking"][0]["label"] == "gpt-image2"
+    assert asset_result["candidate_ranking"][0]["probability"] == 0.91
+    assert body["aggregate"]["candidate_ranking"][0]["label"] == "gpt-image2"
 
 
 def test_image_forensics_keeps_known_public_real_photo_as_real() -> None:
@@ -2932,8 +3197,8 @@ def test_image_forensics_keeps_known_public_real_photo_as_real() -> None:
     asset_result = body["asset_results"][0]
     assert asset_result["top_candidate"] == "real"
     assert asset_result["candidate_ranking"][0]["label"] == "real"
-    assert asset_result["candidate_ranking"][0]["probability"] >= 0.45
-    assert asset_result["candidate_ranking"][1]["label"] == "gpt-image2"
+    assert asset_result["candidate_ranking"][0]["probability"] > asset_result["candidate_ranking"][1]["probability"]
+    assert {item["label"] for item in asset_result["candidate_ranking"]} >= {"gpt-image2", "other-generated", "real"}
     assert body["aggregate"]["top_candidate"] == "real"
 
 

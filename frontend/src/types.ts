@@ -336,6 +336,9 @@ export interface ImageForensicsAssetResult {
   candidate_distribution: Array<Record<string, unknown>>;
   candidate_ranking: Array<Record<string, unknown>>;
   review_recommendation: Record<string, unknown>;
+  real_photo_guard: Record<string, unknown>;
+  binary_gate: Record<string, unknown>;
+  gate_reason: string | null;
   disturbances: PropagationDisturbanceFinding[];
   feature_summary: Record<string, unknown>;
   top_contributions: Array<Record<string, unknown>>;
