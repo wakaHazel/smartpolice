@@ -916,7 +916,7 @@ function TamperWorkspace({
           </label>
           <div className="tamper-upload-note">
             <strong>{selectedCase.platform}</strong>
-            <span>用于展示候选异常区域、可见线索、辅助研判和人工复核建议。</span>
+            <span>用于展示疑似异常区域、可见痕迹、辅助研判和人工复核建议。</span>
           </div>
           <button
             className="real-run"
@@ -1069,7 +1069,7 @@ function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }
     return (
       <EmptyFormalState
         title="等待图片分析"
-        body="先上传图片，再点击“分析这张图”。这里会显示三分类来源候选、置信度和下一步核查建议。"
+        body="先上传图片，再点击“分析这张图”。这里会显示三分类研判结果、置信度和下一步核查建议。"
       />
     );
   }
