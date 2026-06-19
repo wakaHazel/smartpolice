@@ -148,6 +148,7 @@ from app.storage import (
     load_real_analysis_result,
     load_tamper_forensics_result,
     record_agent_run,
+    recommended_huggingface_datasets_for_task,
     save_image_forensics_result,
     save_real_analysis_result,
     save_tamper_forensics_result,
@@ -533,6 +534,7 @@ def training_dataset_status(task_type: str | None = None) -> TrainingDataStatus:
             "training_ready": ready,
             "sources": sources,
             "tasks": tasks,
+            "recommended_huggingface_datasets": recommended_huggingface_datasets_for_task(task_type),
             "note": (
                 tasks[0].note
                 if tasks

@@ -25,6 +25,7 @@ import {
   fetchImageForensics,
   fetchRealAnalysis,
   fetchTamperForensics,
+  fetchTrainingDataStatus,
   runFullAnalysis,
   runImageForensics,
   runRealAnalysis,
@@ -40,6 +41,7 @@ import type {
   RealCaseAnalysisResult,
   RiskLevel,
   TamperForensicsResult,
+  TrainingDataStatus,
 } from "./types";
 
 interface CandidateDistributionEntry {
@@ -94,13 +96,6 @@ const TAMPER_DEMO_CASE_IDS = new Set([
 
 const PRIMARY_TAMPER_DEMO_CASE_ID = "tamper-demo-order-after-sale-001";
 
-const TAMPER_POOL_STATS = [
-  { label: "篡改样例池", value: "4,630" },
-  { label: "订单/售后", value: "1,840" },
-  { label: "银行回单", value: "1,260" },
-  { label: "投诉材料", value: "1,530" },
-];
-
 const GENERATION_POOL_STATS = [
   { label: "训练池图片", value: "5,914" },
   { label: "GPT-image-2", value: "1,928" },
@@ -116,6 +111,7 @@ export function App() {
   const [tamperAnalysis, setTamperAnalysis] = useState<FullAnalysis | null>(null);
   const [tamperEvidenceBundle, setTamperEvidenceBundle] = useState<CaseEvidenceBundle | null>(null);
   const [tamperForensics, setTamperForensics] = useState<TamperForensicsResult | null>(null);
+  const [tamperDatasetStatus, setTamperDatasetStatus] = useState<TrainingDataStatus | null>(null);
   const [analysis, setAnalysis] = useState<FullAnalysis | null>(null);
   const [realAnalysis, setRealAnalysis] = useState<RealCaseAnalysisResult | null>(null);
   const [imageForensics, setImageForensics] = useState<ImageForensicsResult | null>(null);
@@ -246,7 +242,9 @@ export function App() {
     setError("");
     try {
       const nextCases = await fetchCases();
+      const tamperStatus = await fetchTrainingDataStatus("vision_tamper").catch(() => null);
       setCases(nextCases);
+      setTamperDatasetStatus(tamperStatus);
       const preferredTamper =
         selectedTamperCaseId && nextCases.some((item) => item.id === selectedTamperCaseId)
           ? selectedTamperCaseId
@@ -662,6 +660,7 @@ export function App() {
               isUploading={isUploading}
               result={currentTamperForensics}
               selectedCase={selectedTamperCase}
+              tamperDatasetStatus={tamperDatasetStatus}
             />
           ) : !selectedCaseId && !isBusy ? (
             <EmptyFormalState
@@ -864,6 +863,7 @@ function TamperWorkspace({
   onUpload,
   result,
   selectedCase,
+  tamperDatasetStatus,
 }: {
   analysis: FullAnalysis;
   bundle: CaseEvidenceBundle | null;
@@ -873,8 +873,10 @@ function TamperWorkspace({
   onUpload: (file: File | undefined) => Promise<void>;
   result: TamperForensicsResult | null;
   selectedCase: CaseSample;
+  tamperDatasetStatus: TrainingDataStatus | null;
 }) {
   const assetCount = bundle?.assets.length ?? 0;
+  const tamperPoolStats = tamperDatasetStats(tamperDatasetStatus);
   return (
     <div className="analysis-grid">
       <section className="hero-panel">
@@ -893,7 +895,7 @@ function TamperWorkspace({
         </div>
       </section>
 
-      <PoolStatsStrip stats={TAMPER_POOL_STATS} />
+      <PoolStatsStrip stats={tamperPoolStats} />
 
       <section className="module module-span-2 real-workflow">
         <ModuleTitle
@@ -932,7 +934,7 @@ function TamperWorkspace({
         <ModuleTitle
           icon={<Gauge size={18} />}
           title="分析结果"
-          subtitle="候选区域 · 信号来源 · 分数拆解"
+          subtitle="结论 · 主要疑点 · 下一步"
         />
         <TamperForensicsPanel result={result} />
       </section>
@@ -955,6 +957,19 @@ function PoolStatsStrip({ stats }: { stats: Array<{ label: string; value: string
   );
 }
 
+function tamperDatasetStats(status: TrainingDataStatus | null): Array<{ label: string; value: string }> {
+  const task = status?.tasks.find((item) => item.task_type === "vision_tamper");
+  const labels = task?.label_distribution ?? {};
+  const sourceCount = status?.sources.length ?? 0;
+  const externalImages = task?.image_available_count ?? status?.external_sample_count ?? 0;
+  return [
+    { label: "篡改HF/外部图", value: String(externalImages) },
+    { label: "数据源", value: String(sourceCount) },
+    { label: "脱敏演示", value: "3" },
+    { label: "标签类型", value: String(Object.keys(labels).length || 0) },
+  ];
+}
+
 function TamperForensicsPanel({ result }: { result: TamperForensicsResult | null }) {
   const asset = result?.asset_results[0];
   if (!asset) {
@@ -967,25 +982,14 @@ function TamperForensicsPanel({ result }: { result: TamperForensicsResult | null
   }
   const riskLabel = tamperRiskLabel(asset.tamper_risk);
   const cueLabel = tamperCueLabel(asset.top_cue_type);
-  const topPatchSignals = asset.patch_signals.slice(0, 4);
+  const regionHint = asset.suspected_regions[0]?.label ?? "候选区域";
+  const visibleCue = asset.visible_cues[0] ?? asset.suspected_regions[0]?.visible_cues[0] ?? "保留原始材料并进入人工复核。";
+  const nextSteps = compactTamperNextSteps(asset, result);
   return (
     <div className="forensics-board">
       <div className="forensics-primary">
-        <a className="forensics-preview tamper-preview" href={assetUrl(asset.preview_url)} rel="noreferrer" target="_blank">
+        <a className="forensics-preview" href={assetUrl(asset.preview_url)} rel="noreferrer" target="_blank">
           <img alt={asset.filename} src={assetUrl(asset.preview_url)} />
-          {asset.suspected_regions.slice(0, 4).map((region) => (
-            <span
-              className="tamper-bbox"
-              key={region.region_id}
-              style={{
-                height: `${Math.max(4, (region.bbox[3] - region.bbox[1]) * 100)}%`,
-                left: `${region.bbox[0] * 100}%`,
-                top: `${region.bbox[1] * 100}%`,
-                width: `${Math.max(4, (region.bbox[2] - region.bbox[0]) * 100)}%`,
-              }}
-              title={region.label}
-            />
-          ))}
         </a>
         <div className="forensics-verdict">
           <span>初步结论</span>
@@ -1006,30 +1010,8 @@ function TamperForensicsPanel({ result }: { result: TamperForensicsResult | null
           </div>
         ))}
       </div>
-      <div className="tamper-region-list">
-        {asset.suspected_regions.map((region) => (
-          <span key={region.region_id}>
-            <strong>{region.label}<small>{region.signal_sources.map(tamperSignalSourceLabel).join(" / ")}</small></strong>
-            <em>{region.visible_cues[0] ?? tamperCueLabel(region.cue_type)}</em>
-            <b>{Math.round(region.confidence * 100)}%</b>
-          </span>
-        ))}
-      </div>
-      <div className="tamper-evidence-grid">
-        <TamperScoreBreakdown scores={asset.score_breakdown} />
-        <div className="tamper-signal-list">
-          <strong>Patch 异常信号</strong>
-          {topPatchSignals.length ? topPatchSignals.map((signal) => (
-            <span key={signal.region_id}>
-              <b>{tamperPatchSignalLabel(signal.signal_type)}</b>
-              <em>{Math.round(signal.score * 100)}%</em>
-              <small>{signal.explanation}</small>
-            </span>
-          )) : <span><b>暂无高分 patch</b><em>0%</em><small>当前主要依赖凭证上下文和候选字段区域。</small></span>}
-        </div>
-      </div>
-      <div className="tamper-audit-strip">
-        {asset.analysis_layers.map((item) => <span key={item}>{tamperLayerLabel(item)}</span>)}
+      <div className="next-step-list">
+        {[`疑似区域：${regionHint}`, `可见线索：${visibleCue}`, ...nextSteps].map((item) => <span key={item}>{item}</span>)}
       </div>
     </div>
   );
@@ -1071,12 +1053,13 @@ function TamperSuggestions({ result }: { result: TamperForensicsResult | null })
     );
   }
   const boundary = stringValue(result.aggregate.boundary) || "图像篡改分析为辅助线索，需结合原始文件、业务后台和人工复核。";
+  const suggestions = asset.review_suggestions.length ? asset.review_suggestions : result.recommended_next_steps;
   return (
     <div className="disposal-grid">
       <ActionList accent="green" title="可见线索" items={asset.visible_cues} />
-      <ActionList accent="blue" title="人工复核建议" items={asset.review_suggestions.length ? asset.review_suggestions : result.recommended_next_steps} />
+      <ActionList accent="blue" title="人工复核建议" items={suggestions} />
       <ActionList accent="amber" title="辅助研判边界" items={[boundary, ...asset.limitations.slice(0, 2)]} />
-      <ActionList accent="red" title="审计轨迹" items={asset.audit_trace.length ? asset.audit_trace : asset.suspected_regions.map((item) => `${item.label}：${item.visible_cues[0] ?? tamperCueLabel(item.cue_type)}`)} />
+      <ActionList accent="red" title="候选区域" items={asset.suspected_regions.map((item) => `${item.label}：${item.visible_cues[0] ?? tamperCueLabel(item.cue_type)}`)} />
     </div>
   );
 }
@@ -1493,36 +1476,6 @@ function tamperCueLabel(value: string): string {
   return labels[value] ?? (value ? value : "待分析");
 }
 
-function tamperSignalSourceLabel(value: string): string {
-  const labels: Record<string, string> = {
-    document_context_prior: "材料先验",
-    patch_luma_texture_edge_scan: "Patch扫描",
-  };
-  return labels[value] ?? value;
-}
-
-function tamperPatchSignalLabel(value: string): string {
-  const labels: Record<string, string> = {
-    edge_sharpness_mismatch: "边缘锐度异常",
-    edge_smoothing_mismatch: "边缘平滑异常",
-    local_noise_residual: "局部噪声残差",
-    texture_smoothing_mismatch: "纹理平滑异常",
-    local_luma_mismatch: "局部亮度异常",
-  };
-  return labels[value] ?? value;
-}
-
-function tamperLayerLabel(value: string): string {
-  const labels: Record<string, string> = {
-    document_context_prior: "材料上下文先验",
-    file_container_statistics: "文件容器统计",
-    patch_luma_texture_edge_scan: "Patch 亮度/纹理/边缘扫描",
-    candidate_region_ranking: "候选区域排序",
-    human_review_boundary: "人工复核边界",
-  };
-  return labels[value] ?? value;
-}
-
 function sourceLabel(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/_/g, "-");
   const labels: Record<string, string> = {
@@ -1666,6 +1619,14 @@ function compactForensicsNextSteps(verdictTitle: string, generatedSignal: number
     "联系平台调取首发记录、编辑记录和传播链，确认是否被二次转发或压缩。",
     "对外通报前结合现场、权威部门和平台证据复核，不单独依赖单图结论。",
   ];
+}
+
+function compactTamperNextSteps(
+  asset: TamperForensicsResult["asset_results"][number],
+  result: TamperForensicsResult,
+): string[] {
+  const suggestions = asset.review_suggestions.length ? asset.review_suggestions : result.recommended_next_steps;
+  return suggestions.slice(0, 3);
 }
 
 function generatedSignalProbability(candidates: CandidateDistributionEntry[]): number {

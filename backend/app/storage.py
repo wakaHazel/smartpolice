@@ -2479,7 +2479,29 @@ def _strip_prefix(value: str, prefix: str) -> str | None:
     return value[len(prefix):] if value.startswith(prefix) else None
 
 
-def _recommended_huggingface_datasets() -> list[dict[str, str]]:
+def recommended_huggingface_datasets_for_task(task_type: str | None = None) -> list[dict[str, str]]:
+    return _recommended_huggingface_datasets(task_type)
+
+
+def _recommended_huggingface_datasets(task_type: str | None = None) -> list[dict[str, str]]:
+    if task_type == "vision_tamper":
+        return [
+            {
+                "name": "CASIA Image Tampering Detection Evaluation Database",
+                "url": "https://github.com/namtpham/casia2groundtruth",
+                "reason": "局部拼接/复制移动篡改方向，可作为后续篡改定位候选实验的数据源参考；需核验许可与 mask/bbox 可用性。",
+            },
+            {
+                "name": "IMD2020 Image Manipulation Dataset",
+                "url": "https://staff.utia.cas.cz/novozada/db/",
+                "reason": "图像篡改检测与定位数据集，适合验证局部篡改候选区域；导入前需单独确认下载许可和标注格式。",
+            },
+            {
+                "name": "AutoSplice / document or receipt tamper subsets",
+                "url": "https://huggingface.co/datasets?search=image%20tampering",
+                "reason": "用于检索篡改任务自己的公开/HF 数据源；只允许导入 tamper/splice/inpaint/copy-move/document-tamper 相关样本，不能混用生成检测数据。",
+            },
+        ]
     return [
         {
             "name": "FinanceMTEB/MDFEND-Weibo21",
