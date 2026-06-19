@@ -152,6 +152,32 @@ svg {
   word-break: keep-all;
 }
 
+.task-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 4px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  padding: 4px;
+}
+
+.task-switch button {
+  min-height: 34px;
+  border-color: transparent;
+  background: transparent;
+  color: #36504a;
+  padding-inline: 14px;
+  white-space: nowrap;
+}
+
+.task-switch button:hover:not(:disabled),
+.task-switch button.active {
+  border-color: var(--green);
+  background: var(--green);
+  color: #fff;
+}
+
 .eyebrow {
   margin: 0;
   color: var(--green);
@@ -722,6 +748,33 @@ svg {
   color: #073c2d;
 }
 
+.tamper-input-grid {
+  grid-template-columns: 220px minmax(0, 1fr) 150px;
+}
+
+.tamper-upload-note {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07);
+  padding: 9px 11px;
+}
+
+.tamper-upload-note strong {
+  color: #ffffff;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.tamper-upload-note span {
+  color: #b9d8ca;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .asset-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -873,6 +926,22 @@ svg {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 9px;
+}
+
+.pool-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  border: 1px solid var(--line);
+  background: #fbfcf8;
+  padding: 10px;
+}
+
+.pool-strip .small-stat {
+  min-height: 64px;
+  background:
+    linear-gradient(135deg, rgba(15, 114, 91, 0.07), transparent 62%),
+    var(--paper);
 }
 
 .competition-panel {
@@ -1028,6 +1097,7 @@ svg {
 }
 
 .forensics-preview {
+  position: relative;
   display: block;
   width: 100%;
   aspect-ratio: 4 / 3;
@@ -1041,6 +1111,14 @@ svg {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.tamper-bbox {
+  position: absolute;
+  border: 2px solid rgba(201, 120, 8, 0.95);
+  background: rgba(201, 120, 8, 0.08);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.72), 0 0 16px rgba(201, 120, 8, 0.24);
+  pointer-events: none;
 }
 
 .forensics-verdict {
@@ -1129,6 +1207,138 @@ svg {
 .next-step-list span {
   border-left-color: var(--blue);
   background: #f4f8fb;
+}
+
+.tamper-region-list {
+  display: grid;
+  gap: 8px;
+}
+
+.tamper-region-list span {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.75fr) minmax(0, 1.4fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-left: 3px solid var(--green);
+  background: #fbfcf8;
+  padding: 8px 10px;
+}
+
+.tamper-region-list strong {
+  display: grid;
+  gap: 3px;
+  color: var(--ink-strong);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.tamper-region-list strong small {
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.tamper-region-list em {
+  min-width: 0;
+  color: #34413d;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.tamper-region-list b {
+  color: var(--green);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.tamper-evidence-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 8px;
+}
+
+.tamper-score-list,
+.tamper-signal-list {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d8e4dc;
+  background: #fbfcf8;
+  padding: 10px;
+}
+
+.tamper-score-list > strong,
+.tamper-signal-list > strong {
+  color: var(--ink-strong);
+  font-size: 13px;
+}
+
+.tamper-score-list span {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 8px;
+}
+
+.tamper-score-list b,
+.tamper-signal-list b {
+  color: #34413d;
+  font-size: 12px;
+}
+
+.tamper-score-list i {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  background: #e7eeea;
+}
+
+.tamper-score-list i em {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, var(--green), var(--amber));
+}
+
+.tamper-score-list small,
+.tamper-signal-list em {
+  color: var(--green);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 950;
+  text-align: right;
+}
+
+.tamper-signal-list span {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.8fr) auto;
+  gap: 3px 8px;
+  border-left: 3px solid var(--amber);
+  background: #fffaf0;
+  padding: 8px 9px;
+}
+
+.tamper-signal-list small {
+  grid-column: 1 / -1;
+  color: #5f5140;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.tamper-audit-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.tamper-audit-strip span {
+  border: 1px solid #d8e4dc;
+  background: #eef5ef;
+  color: var(--green-dark);
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .result-board {
@@ -2137,6 +2347,7 @@ svg {
   .hero-panel,
   .workflow-steps,
   .real-input-grid,
+  .tamper-input-grid,
   .asset-strip,
   .label-editor,
   .visual-training-layout,
@@ -2145,8 +2356,10 @@ svg {
   .result-board,
   .result-summary-grid,
   .dataset-stats,
+  .pool-strip,
   .forensics-metrics,
   .forensics-primary,
+  .tamper-evidence-grid,
   .support-status-grid,
   .competition-metrics,
   .robustness-callout,
@@ -2189,11 +2402,14 @@ svg {
   .mini-metrics,
   .competition-metrics,
   .dataset-stats,
+  .pool-strip,
   .forensics-metrics,
   .forensics-primary,
   .candidate-summary-list,
   .model-distribution-row,
   .candidate-row,
+  .tamper-region-list span,
+  .tamper-score-list span,
   .visual-calibration-grid,
   .evidence-card,
   .task-pool-grid,

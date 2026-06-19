@@ -429,6 +429,66 @@ class ImageForensicsResult(BaseModel):
     application_context: str
 
 
+class TamperSuspectedRegion(BaseModel):
+    region_id: str
+    label: str
+    bbox: list[float] = Field(min_length=4, max_length=4)
+    cue_type: str
+    confidence: float = Field(ge=0, le=1)
+    visible_cues: list[str]
+    signal_sources: list[str] = Field(default_factory=list)
+
+
+class TamperDocumentFields(BaseModel):
+    document_type: str
+    sensitive_fields: list[str]
+
+
+class TamperPatchSignal(BaseModel):
+    region_id: str
+    bbox: list[float] = Field(min_length=4, max_length=4)
+    signal_type: str
+    score: float = Field(ge=0, le=1)
+    metrics: dict[str, float] = Field(default_factory=dict)
+    explanation: str
+
+
+class TamperForensicsAssetResult(BaseModel):
+    asset_id: str
+    filename: str
+    sha256: str
+    width: int | None = None
+    height: int | None = None
+    content_type: str
+    size_bytes: int = Field(ge=0)
+    preview_url: str
+    tamper_risk: Literal["low", "medium", "high"]
+    top_cue_type: str
+    confidence: float = Field(ge=0, le=1)
+    suspected_regions: list[TamperSuspectedRegion]
+    visible_cues: list[str]
+    document_fields: TamperDocumentFields
+    interpretation: list[str]
+    limitations: list[str]
+    review_suggestions: list[str]
+    feature_summary: dict[str, object] = Field(default_factory=dict)
+    analysis_layers: list[str] = Field(default_factory=list)
+    patch_signals: list[TamperPatchSignal] = Field(default_factory=list)
+    score_breakdown: dict[str, float] = Field(default_factory=dict)
+    audit_trace: list[str] = Field(default_factory=list)
+
+
+class TamperForensicsResult(BaseModel):
+    case_id: str
+    research_target: str
+    trained: bool
+    model_or_rule_version: str
+    asset_results: list[TamperForensicsAssetResult]
+    aggregate: dict[str, object]
+    recommended_next_steps: list[str]
+    application_context: str
+
+
 class CaseAuditBundle(BaseModel):
     case_id: str
     invocations: list[ModelInvocationAudit]

@@ -106,8 +106,84 @@ DEMO_CASES: list[CaseSample] = [
 ]
 
 
+TAMPER_DEMO_CASES: list[CaseSample] = [
+    CaseSample(
+        id="tamper-demo-order-after-sale-001",
+        title="AI 篡改订单/售后凭证研判",
+        scenario="电商售后凭证局部篡改风险",
+        platform="本地演示样例",
+        publish_time="2026-06-18 09:00",
+        source_url="内置脱敏 demo 样例",
+        content=(
+            "演示样例：商品订单截图与售后凭证疑似被局部改写，用于恶意退款或投诉。"
+        ),
+        image_description=(
+            "订单状态、退款金额和商品瑕疵说明区域为候选复核重点，样例图片不包含真实个人信息。"
+        ),
+        spread=SpreadMetrics(
+            views=1200,
+            reposts=18,
+            comments=45,
+            likes=60,
+            velocity="演示样例，不代表真实传播",
+        ),
+        manual_label="AI 篡改取证 demo：订单/售后凭证候选线索",
+        tags=["AI篡改取证", "订单", "售后凭证", "demo"],
+        sensitivity_notes="内置脱敏演示图，不包含真实身份、订单号或联系方式。",
+    ),
+    CaseSample(
+        id="tamper-demo-bank-transfer-001",
+        title="AI 篡改银行回单/转账凭证研判",
+        scenario="转账回单关键字段局部改写风险",
+        platform="本地演示样例",
+        publish_time="2026-06-18 09:05",
+        source_url="内置脱敏 demo 样例",
+        content=(
+            "演示样例：金额、日期、收款方或交易状态字段疑似被局部覆盖或重绘。"
+        ),
+        image_description=(
+            "金额、日期、交易状态和收款方字段为候选异常区域，需与银行流水人工核验。"
+        ),
+        spread=SpreadMetrics(
+            views=980,
+            reposts=9,
+            comments=22,
+            likes=35,
+            velocity="演示样例，不代表真实传播",
+        ),
+        manual_label="AI 篡改取证 demo：银行回单关键字段候选线索",
+        tags=["AI篡改取证", "银行回单", "转账凭证", "demo"],
+        sensitivity_notes="内置脱敏演示图，不包含真实银行账号、姓名或交易流水。",
+    ),
+    CaseSample(
+        id="tamper-demo-medical-complaint-001",
+        title="AI 篡改医疗/餐饮投诉材料研判",
+        scenario="投诉材料票据和现场图局部篡改风险",
+        platform="本地演示样例",
+        publish_time="2026-06-18 09:10",
+        source_url="内置脱敏 demo 样例",
+        content=(
+            "演示样例：收费票据、诊断/投诉说明或餐饮现场图片疑似被局部改写，用于索赔。"
+        ),
+        image_description=(
+            "票据字段、投诉说明和现场局部纹理为候选复核重点，输出仅作为辅助研判。"
+        ),
+        spread=SpreadMetrics(
+            views=1500,
+            reposts=25,
+            comments=58,
+            likes=72,
+            velocity="演示样例，不代表真实传播",
+        ),
+        manual_label="AI 篡改取证 demo：医疗/餐饮投诉材料候选线索",
+        tags=["AI篡改取证", "医疗", "餐饮投诉", "demo"],
+        sensitivity_notes="内置脱敏演示图，不包含真实患者、商户或支付信息。",
+    ),
+]
+
+
 def get_case(case_id: str) -> CaseSample:
-    for case in DEMO_CASES:
+    for case in [*DEMO_CASES, *TAMPER_DEMO_CASES]:
         if case.id == case_id:
             return case
     raise KeyError(case_id)

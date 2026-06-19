@@ -169,6 +169,23 @@ def _png_1x1() -> bytes:
     )
 
 
+def _tampered_patch_png() -> bytes:
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+        temp_path = Path(handle.name)
+    try:
+        image = Image.new("RGB", (128, 128), (230, 230, 226))
+        draw = ImageDraw.Draw(image)
+        for offset in range(0, 128, 16):
+            draw.line((0, offset, 128, offset), fill=(210, 210, 206), width=1)
+            draw.line((offset, 0, offset, 128), fill=(210, 210, 206), width=1)
+        draw.rectangle((64, 32, 112, 64), fill=(20, 20, 20))
+        draw.text((68, 42), "999", fill=(255, 255, 255))
+        image.save(temp_path, format="PNG")
+        return temp_path.read_bytes()
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 def _create_localvision_training_sample(
     monkeypatch: Any,
     *,
@@ -2521,6 +2538,216 @@ def test_image_forensics_cache_is_cleared_after_new_upload() -> None:
     )
     assert second_upload.status_code == 200
     assert client.get(f"/cases/{case_id}/image-forensics").status_code == 404
+
+
+def test_tamper_forensics_requires_uploaded_image() -> None:
+    case_id = "pytest-tamper-no-image-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "篡改取证空图片测试",
+            "scenario": "凭证篡改风险",
+            "platform": "本地测试",
+            "publish_time": "2026-06-18 10:00",
+            "source_url": "本地测试",
+            "content": "测试无图片时篡改取证接口返回 422。",
+            "image_description": "暂无图片",
+            "spread": {
+                "views": 10,
+                "reposts": 0,
+                "comments": 0,
+                "likes": 0,
+                "velocity": "测试",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": None,
+            "tags": ["篡改取证"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+
+    response = client.post(f"/cases/{case_id}/tamper-forensics")
+
+    assert response.status_code == 422
+    assert "AI 篡改图像取证" in response.json()["detail"]
+
+
+def test_tamper_forensics_cache_is_cleared_after_new_upload() -> None:
+    case_id = "pytest-tamper-cache-clear-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "银行回单篡改缓存测试",
+            "scenario": "转账回单关键字段局部改写风险",
+            "platform": "本地测试",
+            "publish_time": "2026-06-18 10:10",
+            "source_url": "本地测试",
+            "content": "测试上传新图片后篡改取证缓存会失效，金额和日期字段需复核。",
+            "image_description": "银行回单截图",
+            "spread": {
+                "views": 100,
+                "reposts": 2,
+                "comments": 4,
+                "likes": 5,
+                "velocity": "测试",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": 55,
+            "tags": ["篡改取证", "银行回单"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("first.png", _png_1x1(), "image/png")},
+    )
+    assert upload.status_code == 200
+    assert client.get(f"/cases/{case_id}/tamper-forensics").status_code == 404
+
+    run_response = client.post(f"/cases/{case_id}/tamper-forensics")
+    assert run_response.status_code == 200
+    body = run_response.json()
+    assert body["research_target"] == "AI 篡改图像取证候选线索"
+    assert body["trained"] is False
+    assert body["model_or_rule_version"] == "tamper-forensics-demo-v0.1"
+    assert body["aggregate"]["max_tamper_risk"] == "high"
+    assert body["asset_results"][0]["top_cue_type"] == "amount_date_mismatch"
+    assert body["asset_results"][0]["suspected_regions"]
+    assert body["asset_results"][0]["analysis_layers"]
+    assert "patch_luma_texture_edge_scan" in body["asset_results"][0]["analysis_layers"]
+    assert "patch_signal" in body["asset_results"][0]["score_breakdown"]
+    assert body["asset_results"][0]["audit_trace"]
+    assert "辅助线索" in " ".join(body["asset_results"][0]["limitations"])
+
+    cached = client.get(f"/cases/{case_id}/tamper-forensics")
+    assert cached.status_code == 200
+    assert cached.json()["asset_results"][0]["sha256"] == body["asset_results"][0]["sha256"]
+
+    second_upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("second.png", _png_1x1(), "image/png")},
+    )
+    assert second_upload.status_code == 200
+    assert client.get(f"/cases/{case_id}/tamper-forensics").status_code == 404
+
+
+def test_delete_case_clears_tamper_forensics_cache() -> None:
+    case_id = "pytest-tamper-delete-cache-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "订单售后篡改删除测试",
+            "scenario": "电商售后凭证局部篡改风险",
+            "platform": "本地测试",
+            "publish_time": "2026-06-18 10:20",
+            "source_url": "本地测试",
+            "content": "订单状态和退款金额疑似被局部改写。",
+            "image_description": "订单截图",
+            "spread": {
+                "views": 100,
+                "reposts": 2,
+                "comments": 4,
+                "likes": 5,
+                "velocity": "测试",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": 55,
+            "tags": ["篡改取证", "订单"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("order.png", _png_1x1(), "image/png")},
+    )
+    assert upload.status_code == 200
+    assert client.post(f"/cases/{case_id}/tamper-forensics").status_code == 200
+    assert client.get(f"/cases/{case_id}/tamper-forensics").status_code == 200
+
+    delete_response = client.delete(f"/cases/{case_id}")
+
+    assert delete_response.status_code == 200
+    assert client.get(f"/cases/{case_id}/tamper-forensics").status_code == 404
+
+
+def test_tamper_demo_cases_are_seeded_and_runnable() -> None:
+    demo_ids = [
+        "tamper-demo-order-after-sale-001",
+        "tamper-demo-bank-transfer-001",
+        "tamper-demo-medical-complaint-001",
+    ]
+    cases = client.get("/cases").json()
+    case_ids = {item["id"] for item in cases}
+    assert set(demo_ids) <= case_ids
+
+    for case_id in demo_ids:
+        evidence = client.get(f"/cases/{case_id}/evidence")
+        assert evidence.status_code == 200
+        assert evidence.json()["assets"]
+        response = client.post(f"/cases/{case_id}/tamper-forensics")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["case_id"] == case_id
+        assert body["asset_results"][0]["tamper_risk"] in {"medium", "high"}
+        assert body["asset_results"][0]["suspected_regions"][0]["bbox"]
+        assert body["asset_results"][0]["visible_cues"]
+        assert body["asset_results"][0]["score_breakdown"]["document_prior"] > 0
+        assert "candidate_region_ranking" in body["asset_results"][0]["analysis_layers"]
+        assert body["recommended_next_steps"]
+        assert "候选" in body["aggregate"]["boundary"]
+
+
+def test_tamper_forensics_uses_image_patch_signals() -> None:
+    case_id = "pytest-tamper-patch-signal-001"
+    create_response = client.post(
+        "/cases",
+        json={
+            "id": case_id,
+            "title": "局部字段覆盖 patch 信号测试",
+            "scenario": "凭证篡改风险",
+            "platform": "本地测试",
+            "publish_time": "2026-06-18 10:30",
+            "source_url": "本地测试",
+            "content": "测试篡改线是否读取图片自身 patch 统计，而不是只依赖案例文本。",
+            "image_description": "存在局部黑底白字覆盖块。",
+            "spread": {
+                "views": 100,
+                "reposts": 2,
+                "comments": 4,
+                "likes": 5,
+                "velocity": "测试",
+            },
+            "manual_label": "待人工复核",
+            "manual_risk_score": 45,
+            "tags": ["篡改取证"],
+            "sensitivity_notes": "",
+            "review_note": "",
+        },
+    )
+    assert create_response.status_code == 200
+    upload = client.post(
+        f"/cases/{case_id}/assets",
+        files={"file": ("patch-signal.png", _tampered_patch_png(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    response = client.post(f"/cases/{case_id}/tamper-forensics")
+
+    assert response.status_code == 200
+    asset_result = response.json()["asset_results"][0]
+    assert asset_result["patch_signals"]
+    assert asset_result["score_breakdown"]["patch_signal"] > 0
+    assert any("patch_luma_texture_edge_scan" in region["signal_sources"] for region in asset_result["suspected_regions"])
+    assert any("patch" in item for item in asset_result["audit_trace"])
 
 
 def test_image_forensics_keeps_known_gpt_image_demo_first(monkeypatch: Any) -> None:

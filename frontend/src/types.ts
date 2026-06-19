@@ -355,6 +355,66 @@ export interface ImageForensicsResult {
   application_context: string;
 }
 
+export interface TamperSuspectedRegion {
+  region_id: string;
+  label: string;
+  bbox: [number, number, number, number];
+  cue_type: string;
+  confidence: number;
+  visible_cues: string[];
+  signal_sources: string[];
+}
+
+export interface TamperDocumentFields {
+  document_type: string;
+  sensitive_fields: string[];
+}
+
+export interface TamperPatchSignal {
+  region_id: string;
+  bbox: [number, number, number, number];
+  signal_type: string;
+  score: number;
+  metrics: Record<string, number>;
+  explanation: string;
+}
+
+export interface TamperForensicsAssetResult {
+  asset_id: string;
+  filename: string;
+  sha256: string;
+  width: number | null;
+  height: number | null;
+  content_type: string;
+  size_bytes: number;
+  preview_url: string;
+  tamper_risk: "low" | "medium" | "high";
+  top_cue_type: string;
+  confidence: number;
+  suspected_regions: TamperSuspectedRegion[];
+  visible_cues: string[];
+  document_fields: TamperDocumentFields;
+  interpretation: string[];
+  limitations: string[];
+  review_suggestions: string[];
+  feature_summary: Record<string, unknown>;
+  analysis_layers: string[];
+  patch_signals: TamperPatchSignal[];
+  score_breakdown: Record<string, number>;
+  audit_trace: string[];
+}
+
+export interface TamperForensicsResult {
+  case_id: string;
+  research_target: string;
+  trained: boolean;
+  model_or_rule_version: string;
+  asset_results: TamperForensicsAssetResult[];
+  aggregate: Record<string, unknown>;
+  recommended_next_steps: string[];
+  application_context: string;
+}
+
 export interface ModelInvocationAudit {
   id: string;
   case_id: string | null;

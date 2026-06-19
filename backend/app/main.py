@@ -95,6 +95,7 @@ from app.models import (
     ReportDraft,
     RiskAssessment,
     RealCaseAnalysisResult,
+    TamperForensicsResult,
     TrainingDataStatus,
     TrainingRunRequest,
     TrainingRunResult,
@@ -128,6 +129,7 @@ from app.storage import (
     delete_case_sample,
     delete_image_forensics_result,
     delete_real_analysis_result,
+    delete_tamper_forensics_result,
     get_case_evidence_bundle,
     get_agent_metrics,
     get_latest_training_run,
@@ -144,12 +146,15 @@ from app.storage import (
     load_case_sample,
     load_image_forensics_result,
     load_real_analysis_result,
+    load_tamper_forensics_result,
     record_agent_run,
     save_image_forensics_result,
     save_real_analysis_result,
+    save_tamper_forensics_result,
     search_knowledge,
     update_case_label,
 )
+from app.tamper_forensics import run_tamper_forensics
 
 
 @asynccontextmanager
@@ -241,6 +246,7 @@ async def upload_case_asset(case_id: str, file: UploadFile) -> CaseAsset:
     try:
         asset = await save_uploaded_asset(case_id, file)
         delete_image_forensics_result(case_id)
+        delete_tamper_forensics_result(case_id)
         delete_real_analysis_result(case_id)
         return asset
     except EvidenceError as exc:
@@ -330,6 +336,29 @@ def cached_case_image_forensics(case_id: str) -> ImageForensicsResult:
     result = load_image_forensics_result(case_id)
     if result is None:
         raise HTTPException(status_code=404, detail="暂无已保存的图像来源研判结果。")
+    return result
+
+
+@app.post("/cases/{case_id}/tamper-forensics", response_model=TamperForensicsResult)
+def case_tamper_forensics(case_id: str) -> TamperForensicsResult:
+    case = _case_or_404(case_id)
+    assets = list_case_assets(case_id)
+    if not assets:
+        raise HTTPException(
+            status_code=422,
+            detail="请先上传至少一张图片/截图，再运行 AI 篡改图像取证。",
+        )
+    result = run_tamper_forensics(case, assets)
+    save_tamper_forensics_result(result)
+    return result
+
+
+@app.get("/cases/{case_id}/tamper-forensics", response_model=TamperForensicsResult)
+def cached_case_tamper_forensics(case_id: str) -> TamperForensicsResult:
+    _case_or_404(case_id)
+    result = load_tamper_forensics_result(case_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="暂无已保存的图像篡改取证结果。")
     return result
 
 

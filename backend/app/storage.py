@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, datetime
+from hashlib import sha256
 import json
 import os
 import re
@@ -29,6 +30,7 @@ from app.models import (
     ModelInvocationAudit,
     LocalVisionCalibrationRunResult,
     RealCaseAnalysisResult,
+    TamperForensicsResult,
     TrainingDataStatus,
     TrainingTaskStatus,
     TrainingRunResult,
@@ -37,7 +39,7 @@ from app.models import (
     VisionTrainingRunResult,
     WebEvidenceSnapshot,
 )
-from app.sample_data import DEMO_CASES
+from app.sample_data import DEMO_CASES, TAMPER_DEMO_CASES
 
 DB_PATH = Path(
     os.getenv(
@@ -122,7 +124,8 @@ def initialize_database() -> None:
             )
             """
         )
-        for case in DEMO_CASES:
+        tamper_demo_ids = {item.id for item in TAMPER_DEMO_CASES}
+        for case in [*DEMO_CASES, *TAMPER_DEMO_CASES]:
             deleted = connection.execute(
                 "SELECT 1 FROM case_deletions WHERE id = ?",
                 (case.id,),
@@ -136,6 +139,15 @@ def initialize_database() -> None:
                 """,
                 (case.id, case.model_dump_json()),
             )
+            if case.id in tamper_demo_ids:
+                connection.execute(
+                    """
+                    UPDATE case_samples
+                    SET payload = ?
+                    WHERE id = ?
+                    """,
+                    (case.model_dump_json(), case.id),
+                )
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS agent_runs (
@@ -300,6 +312,15 @@ def initialize_database() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS tamper_forensics_runs (
+                case_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS real_analysis_runs (
                 case_id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
@@ -371,6 +392,7 @@ def initialize_database() -> None:
                     for item in KNOWLEDGE_SEED
                 ],
             )
+        _seed_tamper_demo_assets(connection)
         _rebuild_knowledge_fts(connection)
         connection.commit()
 
@@ -503,6 +525,7 @@ def delete_case_sample(case_id: str) -> CaseSample:
             "llm_invocations",
             "case_assets",
             "image_forensics_runs",
+            "tamper_forensics_runs",
             "real_analysis_runs",
             "web_snapshots",
             "evidence_items",
@@ -1574,6 +1597,46 @@ def delete_image_forensics_result(case_id: str) -> None:
         connection.commit()
 
 
+def save_tamper_forensics_result(result: TamperForensicsResult) -> None:
+    initialize_database()
+    with sqlite3.connect(DB_PATH) as connection:
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO tamper_forensics_runs (case_id, created_at, payload)
+            VALUES (?, ?, ?)
+            """,
+            (
+                result.case_id,
+                datetime.now(UTC).isoformat(),
+                result.model_dump_json(),
+            ),
+        )
+        connection.commit()
+
+
+def load_tamper_forensics_result(case_id: str) -> TamperForensicsResult | None:
+    initialize_database()
+    with sqlite3.connect(DB_PATH) as connection:
+        row = connection.execute(
+            """
+            SELECT payload
+            FROM tamper_forensics_runs
+            WHERE case_id = ?
+            """,
+            (case_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return TamperForensicsResult.model_validate(json.loads(str(row[0])))
+
+
+def delete_tamper_forensics_result(case_id: str) -> None:
+    initialize_database()
+    with sqlite3.connect(DB_PATH) as connection:
+        connection.execute("DELETE FROM tamper_forensics_runs WHERE case_id = ?", (case_id,))
+        connection.commit()
+
+
 def save_real_analysis_result(result: RealCaseAnalysisResult) -> None:
     initialize_database()
     with sqlite3.connect(DB_PATH) as connection:
@@ -1892,6 +1955,240 @@ def search_knowledge(query: str, limit: int = 5) -> list[KnowledgeSearchResult]:
             for row in fallback_rows
         ]
     return sorted(scored, key=lambda item: item.score, reverse=True)[:safe_limit]
+
+
+def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    data_root = Path(
+        os.getenv(
+            "SMARTPOLICE_DATA_ROOT",
+            str(Path(__file__).resolve().parents[1] / "data"),
+        )
+    )
+    specs = {
+        "tamper-demo-order-after-sale-001": {
+            "asset_id": "asset-tamper-demo-order",
+            "filename": "tamper-demo-order-after-sale.png",
+            "kind": "order",
+            "title": "售后服务单",
+            "accent": (28, 112, 86),
+            "legacy_filenames": ["tamper-demo-disaster-material.jpg"],
+        },
+        "tamper-demo-bank-transfer-001": {
+            "asset_id": "asset-tamper-demo-bank",
+            "filename": "tamper-demo-bank-transfer.png",
+            "kind": "bank",
+            "title": "电子转账回单",
+            "accent": (42, 98, 176),
+            "legacy_filenames": ["tamper-demo-old-image-screenshot.jpg"],
+        },
+        "tamper-demo-medical-complaint-001": {
+            "asset_id": "asset-tamper-demo-medical",
+            "filename": "tamper-demo-medical-complaint.png",
+            "kind": "complaint",
+            "title": "投诉材料附件",
+            "accent": (128, 92, 42),
+            "legacy_filenames": ["tamper-demo-public-order-screenshot.png"],
+        },
+    }
+    font_regular = _load_demo_font(22, bold=False)
+    font_medium = _load_demo_font(26, bold=True)
+    font_large = _load_demo_font(36, bold=True)
+    font_small = _load_demo_font(18, bold=False)
+    for case in TAMPER_DEMO_CASES:
+        spec = specs[case.id]
+        deleted = connection.execute(
+            "SELECT 1 FROM case_deletions WHERE id = ?",
+            (case.id,),
+        ).fetchone()
+        if deleted is not None:
+            continue
+        seeded_case = connection.execute(
+            "SELECT 1 FROM case_samples WHERE id = ?",
+            (case.id,),
+        ).fetchone()
+        if seeded_case is None:
+            continue
+        case_dir = data_root / "uploads" / case.id
+        case_dir.mkdir(parents=True, exist_ok=True)
+        for legacy_name in spec.get("legacy_filenames", []):
+            legacy_path = case_dir / str(legacy_name)
+            if legacy_path.exists() and legacy_path.is_file():
+                legacy_path.unlink()
+        image_path = case_dir / str(spec["filename"])
+        image = _draw_tamper_demo_image(
+            kind=str(spec["kind"]),
+            title=str(spec["title"]),
+            accent=tuple(spec["accent"]),
+            fonts={
+                "regular": font_regular,
+                "medium": font_medium,
+                "large": font_large,
+                "small": font_small,
+            },
+        )
+        image.save(image_path, format="PNG")
+        raw = image_path.read_bytes()
+        digest = sha256(raw).hexdigest()
+        created_at = datetime.now(UTC).isoformat()
+        relative_path = image_path.resolve().relative_to(data_root.resolve())
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO case_assets (
+                id,
+                case_id,
+                filename,
+                content_type,
+                size_bytes,
+                width,
+                height,
+                sha256,
+                storage_path,
+                preview_url,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                spec["asset_id"],
+                case.id,
+                spec["filename"],
+                "image/png",
+                len(raw),
+                image.width,
+                image.height,
+                digest,
+                str(image_path),
+                f"/evidence/files/{str(relative_path).replace(chr(92), '/')}",
+                created_at,
+            ),
+        )
+        connection.execute(
+            "DELETE FROM tamper_forensics_runs WHERE case_id = ?",
+            (case.id,),
+        )
+
+
+def _content_type_for_path(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".webp":
+        return "image/webp"
+    return "application/octet-stream"
+
+
+def _load_demo_font(size: int, *, bold: bool) -> object:
+    try:
+        from PIL import ImageFont
+    except ImportError:  # pragma: no cover
+        raise
+    candidates = [
+        Path("C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc"),
+        Path("C:/Windows/Fonts/Noto Sans SC Bold (TrueType).otf" if bold else "C:/Windows/Fonts/Noto Sans SC (TrueType).otf"),
+        Path("C:/Windows/Fonts/simhei.ttf"),
+        Path("C:/Windows/Fonts/simsun.ttc"),
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                return ImageFont.truetype(str(path), size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+def _draw_tamper_demo_image(
+    *,
+    kind: str,
+    title: str,
+    accent: tuple[int, int, int],
+    fonts: dict[str, object],
+) -> object:
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (900, 620), (236, 239, 234))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 900, 620), fill=(236, 239, 234))
+    draw.rectangle((54, 34, 846, 586), fill=(255, 255, 250), outline=(205, 213, 207), width=2)
+    draw.rectangle((54, 34, 846, 100), fill=accent)
+    draw.text((86, 54), title, fill=(255, 255, 255), font=fonts["large"])
+    draw.text((650, 64), "脱敏演示样例", fill=(230, 244, 238), font=fonts["small"])
+    draw.line((86, 126, 814, 126), fill=(218, 224, 219), width=2)
+
+    if kind == "order":
+        _draw_form_rows(
+            draw,
+            fonts,
+            [
+                ("订单编号", "SP20260618-0831-****", "申请时间", "2026-06-18 08:42"),
+                ("商品名称", "智能家居配件套装", "售后类型", "仅退款"),
+                ("订单金额", "388.00 元", "退款状态", "已通过"),
+                ("收件人", "王*（脱敏）", "联系方式", "138****9271"),
+                ("客服备注", "用户称商品未收到，需核验物流签收记录", "", ""),
+            ],
+            start_y=154,
+        )
+        _draw_subtle_overlay(draw, fonts, (620, 203, 726, 238), "仅退款")
+    elif kind == "bank":
+        _draw_form_rows(
+            draw,
+            fonts,
+            [
+                ("付款账户", "6222 **** **** 1936", "收款账户", "6217 **** **** 8021"),
+                ("收款户名", "陈*（脱敏）", "交易日期", "2026-06-18"),
+                ("交易金额", "98,600.00 元", "交易状态", "处理成功"),
+                ("流水号", "EBK20260618****3917", "用途", "材料款"),
+                ("回单说明", "本回单为演示样例，不代表真实银行流水", "", ""),
+            ],
+            start_y=154,
+        )
+        draw.ellipse((612, 386, 778, 514), outline=(206, 70, 70), width=3)
+        draw.text((632, 436), "电子回单章", fill=(184, 50, 50), font=fonts["medium"])
+        _draw_subtle_overlay(draw, fonts, (626, 211, 764, 246), "2026-06-18")
+    else:
+        _draw_form_rows(
+            draw,
+            fonts,
+            [
+                ("材料类型", "医疗/餐饮投诉附件", "提交时间", "2026-06-18 09:10"),
+                ("机构名称", "某门店/机构（脱敏）", "单据编号", "TS-20260618-****"),
+                ("投诉金额", "1,260.00 元", "项目名称", "服务费用"),
+                ("现场说明", "图片拼图包含票据和现场局部照片", "处理状态", "待核验"),
+                ("备注", "需调取原始单据、平台记录和现场核查材料", "", ""),
+            ],
+            start_y=154,
+        )
+        draw.rectangle((590, 360, 770, 514), fill=(238, 242, 238), outline=(190, 198, 190), width=2)
+        draw.text((612, 414), "现场图区域", fill=(90, 98, 92), font=fonts["medium"])
+        _draw_subtle_overlay(draw, fonts, (624, 188, 814, 226), "TS-20260618-****")
+    draw.text((86, 548), "说明：本图为系统内置脱敏演示材料，无真实姓名、账号、订单号或联系方式。", fill=(98, 108, 102), font=fonts["small"])
+    return image
+
+
+def _draw_form_rows(draw: object, fonts: dict[str, object], rows: list[tuple[str, str, str, str]], *, start_y: int) -> None:
+    y = start_y
+    for left_label, left_value, right_label, right_value in rows:
+        draw.rectangle((86, y - 10, 814, y + 38), fill=(250, 251, 248), outline=(226, 231, 226))
+        draw.text((108, y), left_label, fill=(92, 103, 96), font=fonts["small"])
+        draw.text((218, y - 3), left_value, fill=(28, 36, 32), font=fonts["regular"])
+        if right_label:
+            draw.line((492, y - 10, 492, y + 38), fill=(226, 231, 226), width=1)
+            draw.text((514, y), right_label, fill=(92, 103, 96), font=fonts["small"])
+            draw.text((626, y - 3), right_value, fill=(28, 36, 32), font=fonts["regular"])
+        y += 58
+
+
+def _draw_subtle_overlay(draw: object, fonts: dict[str, object], box: tuple[int, int, int, int], text: str) -> None:
+    x1, y1, x2, y2 = box
+    draw.rectangle((x1 - 4, y1 - 3, x2 + 5, y2 + 4), fill=(252, 250, 244), outline=(236, 230, 218))
+    draw.text((x1, y1), text, fill=(18, 24, 22), font=fonts["medium"])
+    draw.line((x1 - 2, y2 + 3, x2 + 2, y2 + 3), fill=(232, 222, 206), width=1)
 
 
 def _case_id(payload: CaseCreateRequest) -> str:

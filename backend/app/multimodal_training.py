@@ -1822,7 +1822,7 @@ def _evaluate_feature_ablation_set(
             real_protection_margin=float(
                 binary_gate_metadata.get("real_protection_margin", GENERATOR_REAL_PROTECTION_MARGIN)
             ),
-            open_set_min_margin=float(getattr(request, "open_set_min_margin", 0.0) or 0.0),
+            open_set_min_margin=0.0,
         )
         predictions.append(str(prediction["label"]))
         valid_labels.append(labels[index])

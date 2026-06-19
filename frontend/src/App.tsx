@@ -24,9 +24,11 @@ import {
   fetchCases,
   fetchImageForensics,
   fetchRealAnalysis,
+  fetchTamperForensics,
   runFullAnalysis,
   runImageForensics,
   runRealAnalysis,
+  runTamperForensics,
   uploadCaseAsset,
 } from "./api";
 import type {
@@ -37,6 +39,7 @@ import type {
   ImageForensicsResult,
   RealCaseAnalysisResult,
   RiskLevel,
+  TamperForensicsResult,
 } from "./types";
 
 interface CandidateDistributionEntry {
@@ -45,6 +48,8 @@ interface CandidateDistributionEntry {
   rank: number;
   displayName: string;
 }
+
+type WorkbenchTask = "generation" | "tamper";
 
 type MarkdownBlock =
   | { kind: "code"; text: string }
@@ -81,9 +86,36 @@ const VISIBLE_DEMO_CASE_IDS = new Set([
   "demo-real-beijing-road-street-001",
 ]);
 
+const TAMPER_DEMO_CASE_IDS = new Set([
+  "tamper-demo-order-after-sale-001",
+  "tamper-demo-bank-transfer-001",
+  "tamper-demo-medical-complaint-001",
+]);
+
+const PRIMARY_TAMPER_DEMO_CASE_ID = "tamper-demo-order-after-sale-001";
+
+const TAMPER_POOL_STATS = [
+  { label: "篡改样例池", value: "4,630" },
+  { label: "订单/售后", value: "1,840" },
+  { label: "银行回单", value: "1,260" },
+  { label: "投诉材料", value: "1,530" },
+];
+
+const GENERATION_POOL_STATS = [
+  { label: "训练池图片", value: "5,914" },
+  { label: "GPT-image-2", value: "1,928" },
+  { label: "其他AI模型", value: "2,834" },
+  { label: "真实照片", value: "1,152" },
+];
+
 export function App() {
+  const [activeTask, setActiveTask] = useState<WorkbenchTask>("generation");
   const [cases, setCases] = useState<CaseSample[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState<string>("");
+  const [selectedTamperCaseId, setSelectedTamperCaseId] = useState<string>("");
+  const [tamperAnalysis, setTamperAnalysis] = useState<FullAnalysis | null>(null);
+  const [tamperEvidenceBundle, setTamperEvidenceBundle] = useState<CaseEvidenceBundle | null>(null);
+  const [tamperForensics, setTamperForensics] = useState<TamperForensicsResult | null>(null);
   const [analysis, setAnalysis] = useState<FullAnalysis | null>(null);
   const [realAnalysis, setRealAnalysis] = useState<RealCaseAnalysisResult | null>(null);
   const [imageForensics, setImageForensics] = useState<ImageForensicsResult | null>(null);
@@ -107,9 +139,15 @@ export function App() {
     () => cases.find((item) => item.id === selectedCaseId) ?? null,
     [cases, selectedCaseId],
   );
+  const selectedTamperCase = useMemo(
+    () => cases.find((item) => item.id === selectedTamperCaseId) ?? null,
+    [cases, selectedTamperCaseId],
+  );
 
   const currentImageForensics = imageForensics?.case_id === selectedCaseId ? imageForensics : null;
+  const currentTamperForensics = tamperForensics?.case_id === selectedTamperCaseId ? tamperForensics : null;
   const selectedCaseAssetCount = evidenceBundle?.assets.length ?? 0;
+  const selectedTamperAssetCount = tamperEvidenceBundle?.assets.length ?? 0;
 
   const visibleCases = useMemo(() => {
     const query = searchText.trim().toLowerCase();
@@ -140,6 +178,11 @@ export function App() {
       return matchesText && matchesLevel;
     });
   }, [cases, levelFilter, searchText]);
+
+  const visibleTamperCases = useMemo(
+    () => cases.filter((item) => TAMPER_DEMO_CASE_IDS.has(item.id) || item.scenario.includes("篡改")),
+    [cases],
+  );
 
   const loadAnalysis = useCallback(
     async (caseId: string) => {
@@ -176,12 +219,41 @@ export function App() {
     [],
   );
 
+  const loadTamperAnalysis = useCallback(
+    async (caseId: string) => {
+      setIsBusy(true);
+      setError("");
+      try {
+        const [result, bundle, cachedTamper] = await Promise.all([
+          runFullAnalysis(caseId),
+          fetchCaseEvidence(caseId),
+          fetchTamperForensics(caseId).catch(() => null),
+        ]);
+        setTamperAnalysis(result);
+        setTamperEvidenceBundle(bundle);
+        setTamperForensics(cachedTamper);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "篡改取证材料加载失败");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [],
+  );
+
   const loadAll = useCallback(async () => {
     setIsBusy(true);
     setError("");
     try {
       const nextCases = await fetchCases();
       setCases(nextCases);
+      const preferredTamper =
+        selectedTamperCaseId && nextCases.some((item) => item.id === selectedTamperCaseId)
+          ? selectedTamperCaseId
+          : nextCases.find((item) => item.id === PRIMARY_TAMPER_DEMO_CASE_ID)?.id ??
+            nextCases.find((item) => TAMPER_DEMO_CASE_IDS.has(item.id))?.id ??
+            "";
+      setSelectedTamperCaseId(preferredTamper);
       const preferred =
         selectedCaseId && nextCases.some((item) => item.id === selectedCaseId)
           ? selectedCaseId
@@ -200,11 +272,17 @@ export function App() {
       setError(err instanceof Error ? err.message : "加载失败");
       setIsBusy(false);
     }
-  }, [loadAnalysis, selectedCaseId]);
+  }, [loadAnalysis, selectedCaseId, selectedTamperCaseId]);
 
   useEffect(() => {
     void loadAll();
   }, []);
+
+  useEffect(() => {
+    if (activeTask === "tamper" && selectedTamperCaseId) {
+      void loadTamperAnalysis(selectedTamperCaseId);
+    }
+  }, [activeTask, loadTamperAnalysis, selectedTamperCaseId]);
 
   const handleSelectCase = useCallback(
     (caseId: string) => {
@@ -217,6 +295,16 @@ export function App() {
     },
     [loadAnalysis],
   );
+
+  const handleSelectTamperCase = useCallback((caseId: string) => {
+    setSelectedTamperCaseId(caseId);
+    setTamperAnalysis(null);
+    setTamperEvidenceBundle(null);
+    setTamperForensics(null);
+    setMessage("");
+    setError("");
+    void loadTamperAnalysis(caseId);
+  }, [loadTamperAnalysis]);
 
   const handleDeleteCase = useCallback(async (caseItem: CaseSample) => {
     const confirmed = window.confirm(`删除案例“${caseItem.title}”？相关图片、来源快照和报告记录也会一并移除。`);
@@ -292,6 +380,45 @@ export function App() {
       setIsUploading(false);
     }
   }, [refreshEvidence, selectedCase]);
+
+  const handleTamperUpload = useCallback(async (file: File | undefined) => {
+    if (!selectedTamperCase || !file) {
+      return;
+    }
+    setIsUploading(true);
+    setError("");
+    setMessage("");
+    try {
+      const asset = await uploadCaseAsset(selectedTamperCase.id, file);
+      setMessage(`图片已上传并固定：${asset.sha256.slice(0, 12)}`);
+      setTamperForensics(null);
+      const bundle = await fetchCaseEvidence(selectedTamperCase.id);
+      setTamperEvidenceBundle(bundle);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "图片上传失败");
+    } finally {
+      setIsUploading(false);
+    }
+  }, [selectedTamperCase]);
+
+  const handleTamperForensics = useCallback(async () => {
+    if (!selectedTamperCase) {
+      return;
+    }
+    setIsImageForensicsRunning(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await runTamperForensics(selectedTamperCase.id);
+      setTamperForensics(result);
+      const asset = result.asset_results[0];
+      setMessage(asset ? `篡改取证完成：${tamperCueLabel(asset.top_cue_type)} ${Math.round(asset.confidence * 100)}%` : "篡改取证完成");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "图像篡改取证失败");
+    } finally {
+      setIsImageForensicsRunning(false);
+    }
+  }, [selectedTamperCase]);
 
   const handleImageForensics = useCallback(async () => {
     if (!selectedCase) {
@@ -392,16 +519,45 @@ export function App() {
     URL.revokeObjectURL(url);
   }, [analysis, realAnalysis]);
 
+  const taskCopy = activeTask === "generation"
+    ? {
+        badge: "选案件、传图片、看结论、出报告",
+        caseTitle: "案例库",
+      }
+    : {
+        badge: "选样例、传材料、看疑点、做复核",
+        caseTitle: "篡改样例",
+      };
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <div>
           <p className="eyebrow">公安机关涉网谣言图像取证</p>
           <h1>公共安全AIGC图像取证研判台</h1>
+          <div className="task-switch" aria-label="任务切换">
+            {[
+              ["generation", "AI 生成检测"],
+              ["tamper", "AI 篡改取证"],
+            ].map(([key, label]) => (
+              <button
+                className={activeTask === key ? "active" : ""}
+                key={key}
+                onClick={() => {
+                  setActiveTask(key as WorkbenchTask);
+                  setMessage("");
+                  setError("");
+                }}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="topbar-badge">
           <ShieldAlert size={18} />
-          <span>选案件、传图片、看结论、出报告</span>
+          <span>{taskCopy.badge}</span>
         </div>
       </header>
 
@@ -412,25 +568,29 @@ export function App() {
         <aside className="case-rail" aria-label="案例库">
           <div className="section-heading">
             <ClipboardList size={18} />
-            <span>案例库</span>
-            <button className="icon-action" onClick={() => setShowCreate((value) => !value)} title="新建案件" type="button">
-              <Plus size={16} />
-            </button>
+            <span>{taskCopy.caseTitle}</span>
+            {activeTask === "generation" ? (
+              <button className="icon-action" onClick={() => setShowCreate((value) => !value)} title="新建案件" type="button">
+                <Plus size={16} />
+              </button>
+            ) : null}
           </div>
 
-          <div className="filter-bar">
-            <label>
-              <Search size={15} />
-              <input onChange={(event) => setSearchText(event.target.value)} placeholder="搜索案例" value={searchText} />
-            </label>
-            <select onChange={(event) => setLevelFilter(event.target.value)} value={levelFilter}>
-              {["全部", "低", "关注", "较高", "紧急"].map((item) => (
-                <option key={item} value={item}>{item}</option>
-              ))}
-            </select>
-          </div>
+          {activeTask === "generation" ? (
+            <div className="filter-bar">
+              <label>
+                <Search size={15} />
+                <input onChange={(event) => setSearchText(event.target.value)} placeholder="搜索案例" value={searchText} />
+              </label>
+              <select onChange={(event) => setLevelFilter(event.target.value)} value={levelFilter}>
+                {["全部", "低", "关注", "较高", "紧急"].map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
 
-          {showCreate ? (
+          {activeTask === "generation" && showCreate ? (
             <CaseForm
               form={caseForm}
               onChange={setCaseForm}
@@ -441,37 +601,69 @@ export function App() {
           ) : null}
 
           <div className="case-list">
-            {visibleCases.map((item) => (
-              <article
-                className={`case-card ${item.id === selectedCaseId ? "active" : ""}`}
-                key={item.id}
-              >
-                <button className="case-card-main" onClick={() => handleSelectCase(item.id)} type="button">
-                  <span className="case-scenario">{item.scenario}</span>
-                  <strong>{item.title}</strong>
-                  <span>{item.platform} · {item.spread.velocity}</span>
-                  <em>待研判</em>
-                </button>
-                <button
-                  aria-label={`删除案例：${item.title}`}
-                  className="case-delete-button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void handleDeleteCase(item);
-                  }}
-                  title="删除案例"
-                  type="button"
+            {activeTask === "generation" ? (
+              <>
+                {visibleCases.map((item) => (
+                  <article
+                    className={`case-card ${item.id === selectedCaseId ? "active" : ""}`}
+                    key={item.id}
+                  >
+                    <button className="case-card-main" onClick={() => handleSelectCase(item.id)} type="button">
+                      <span className="case-scenario">{item.scenario}</span>
+                      <strong>{item.title}</strong>
+                      <span>{item.platform} · {item.spread.velocity}</span>
+                      <em>待研判</em>
+                    </button>
+                    <button
+                      aria-label={`删除案例：${item.title}`}
+                      className="case-delete-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteCase(item);
+                      }}
+                      title="删除案例"
+                      type="button"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </article>
+                ))}
+                {!visibleCases.length ? <p className="empty-state">暂无案例。点击上方加号新建案件。</p> : null}
+              </>
+            ) : (
+              visibleTamperCases.map((item) => (
+                <article
+                  className={`case-card ${item.id === selectedTamperCaseId ? "active" : ""}`}
+                  key={item.id}
                 >
-                  <Trash2 size={15} />
-                </button>
-              </article>
-            ))}
-            {!visibleCases.length ? <p className="empty-state">暂无案例。点击上方加号新建案件。</p> : null}
+                  <button className="case-card-main" onClick={() => handleSelectTamperCase(item.id)} type="button">
+                    <span className="case-scenario">{item.scenario}</span>
+                    <strong>{item.title}</strong>
+                    <span>{item.platform} · {item.spread.velocity}</span>
+                    <em>演示样例</em>
+                  </button>
+                </article>
+              ))
+            )}
+            {activeTask === "tamper" && !visibleTamperCases.length ? <p className="empty-state">篡改演示案例待同步。</p> : null}
           </div>
         </aside>
 
         <section className="analysis-panel">
-          {!selectedCaseId && !isBusy ? (
+          {activeTask === "tamper" && (isBusy || !tamperAnalysis || !selectedTamperCase) ? (
+            <LoadingPanel />
+          ) : activeTask === "tamper" && selectedTamperCase ? (
+            <TamperWorkspace
+              analysis={tamperAnalysis!}
+              onAnalyze={handleTamperForensics}
+              onUpload={handleTamperUpload}
+              bundle={tamperEvidenceBundle}
+              isAnalyzing={isImageForensicsRunning}
+              isUploading={isUploading}
+              result={currentTamperForensics}
+              selectedCase={selectedTamperCase}
+            />
+          ) : !selectedCaseId && !isBusy ? (
             <EmptyFormalState
               title="暂无案例"
               body="点击案例库上方的加号新建案件，然后上传图片进行来源研判。"
@@ -495,6 +687,8 @@ export function App() {
                   <SmallStat label="报告" value={realAnalysis ? "已生成" : "待生成"} />
                 </div>
               </section>
+
+              <PoolStatsStrip stats={GENERATION_POOL_STATS} />
 
               <section className="module module-span-2 real-workflow">
                 <ModuleTitle
@@ -533,7 +727,7 @@ export function App() {
                     <Search size={16} />{isImageForensicsRunning ? "分析中" : "分析这张图"}
                   </button>
                 </div>
-                <AssetSnapshotStrip bundle={evidenceBundle} />
+                <AssetSnapshotStrip bundle={evidenceBundle} task="generation" />
               </section>
 
               <section className="module forensics-result-module">
@@ -661,6 +855,232 @@ function DetailPanel({
   );
 }
 
+function TamperWorkspace({
+  analysis,
+  bundle,
+  isAnalyzing,
+  isUploading,
+  onAnalyze,
+  onUpload,
+  result,
+  selectedCase,
+}: {
+  analysis: FullAnalysis;
+  bundle: CaseEvidenceBundle | null;
+  isAnalyzing: boolean;
+  isUploading: boolean;
+  onAnalyze: () => Promise<void>;
+  onUpload: (file: File | undefined) => Promise<void>;
+  result: TamperForensicsResult | null;
+  selectedCase: CaseSample;
+}) {
+  const assetCount = bundle?.assets.length ?? 0;
+  return (
+    <div className="analysis-grid">
+      <section className="hero-panel">
+        <div className="hero-copy">
+          <p className="eyebrow">当前样例</p>
+          <h2>{analysis.case.title}</h2>
+          <p>{analysis.case.content}</p>
+          <div className="tag-row">
+            {analysis.case.tags.map((tag) => <span key={tag}>{tag}</span>)}
+          </div>
+        </div>
+        <div className="case-progress-panel">
+          <SmallStat label="图片" value={`${assetCount} 张`} />
+          <SmallStat label="分析" value={result ? "已完成" : assetCount ? "待点击" : "待上传"} />
+          <SmallStat label="接口" value="正式API" />
+        </div>
+      </section>
+
+      <PoolStatsStrip stats={TAMPER_POOL_STATS} />
+
+      <section className="module module-span-2 real-workflow">
+        <ModuleTitle
+          icon={<ShieldAlert size={18} />}
+          title="上传待检图片"
+          subtitle={`已上传 ${assetCount} 张`}
+        />
+        <div className="real-input-grid tamper-input-grid">
+          <label className="upload-box">
+            <UploadCloud size={22} />
+            <span>{isUploading ? "正在上传固定" : "上传图片"}</span>
+            <input
+              accept="image/png,image/jpeg,image/webp"
+              disabled={isUploading}
+              onChange={(event) => onUpload(event.target.files?.[0])}
+              type="file"
+            />
+          </label>
+          <div className="tamper-upload-note">
+            <strong>{selectedCase.platform}</strong>
+            <span>用于展示候选异常区域、可见线索、辅助研判和人工复核建议。</span>
+          </div>
+          <button
+            className="real-run"
+            disabled={isAnalyzing || !assetCount}
+            onClick={() => void onAnalyze()}
+            type="button"
+          >
+            <Search size={16} />{isAnalyzing ? "分析中" : "分析这张图"}
+          </button>
+        </div>
+        <AssetSnapshotStrip bundle={bundle} task="tamper" />
+      </section>
+
+      <section className="module forensics-result-module">
+        <ModuleTitle
+          icon={<Gauge size={18} />}
+          title="分析结果"
+          subtitle="候选区域 · 信号来源 · 分数拆解"
+        />
+        <TamperForensicsPanel result={result} />
+      </section>
+
+      <section className="module action-module module-span-2">
+        <ModuleTitle icon={<Wand2 size={18} />} title="复核建议" subtitle="原件、后台、时间戳" />
+        <TamperSuggestions result={result} />
+      </section>
+    </div>
+  );
+}
+
+function PoolStatsStrip({ stats }: { stats: Array<{ label: string; value: string }> }) {
+  return (
+    <section className="pool-strip module-span-2" aria-label="样本池概览">
+      {stats.map((item) => (
+        <SmallStat key={item.label} label={item.label} value={item.value} />
+      ))}
+    </section>
+  );
+}
+
+function TamperForensicsPanel({ result }: { result: TamperForensicsResult | null }) {
+  const asset = result?.asset_results[0];
+  if (!asset) {
+    return (
+      <EmptyFormalState
+        title="等待图片分析"
+        body="先上传待检图片，再点击“分析这张图”。这里会显示篡改风险、主要疑点、疑似区域和下一步核查建议。"
+      />
+    );
+  }
+  const riskLabel = tamperRiskLabel(asset.tamper_risk);
+  const cueLabel = tamperCueLabel(asset.top_cue_type);
+  const topPatchSignals = asset.patch_signals.slice(0, 4);
+  return (
+    <div className="forensics-board">
+      <div className="forensics-primary">
+        <a className="forensics-preview tamper-preview" href={assetUrl(asset.preview_url)} rel="noreferrer" target="_blank">
+          <img alt={asset.filename} src={assetUrl(asset.preview_url)} />
+          {asset.suspected_regions.slice(0, 4).map((region) => (
+            <span
+              className="tamper-bbox"
+              key={region.region_id}
+              style={{
+                height: `${Math.max(4, (region.bbox[3] - region.bbox[1]) * 100)}%`,
+                left: `${region.bbox[0] * 100}%`,
+                top: `${region.bbox[1] * 100}%`,
+                width: `${Math.max(4, (region.bbox[2] - region.bbox[0]) * 100)}%`,
+              }}
+              title={region.label}
+            />
+          ))}
+        </a>
+        <div className="forensics-verdict">
+          <span>初步结论</span>
+          <strong>{riskLabel}风险</strong>
+          <em>主要疑点 {cueLabel} · 可信度 {Math.round(asset.confidence * 100)}%</em>
+        </div>
+      </div>
+      <div className="candidate-summary-list candidate-summary-list-three" aria-label="篡改风险摘要">
+        {[
+          { label: "风险等级", name: `${riskLabel}风险`, value: "" },
+          { label: "主要疑点", name: cueLabel, value: "" },
+          { label: "可信度", name: "辅助研判", value: `${Math.round(asset.confidence * 100)}%` },
+        ].map((item) => (
+          <div className="candidate-summary-item" key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.name}</strong>
+            <b>{item.value}</b>
+          </div>
+        ))}
+      </div>
+      <div className="tamper-region-list">
+        {asset.suspected_regions.map((region) => (
+          <span key={region.region_id}>
+            <strong>{region.label}<small>{region.signal_sources.map(tamperSignalSourceLabel).join(" / ")}</small></strong>
+            <em>{region.visible_cues[0] ?? tamperCueLabel(region.cue_type)}</em>
+            <b>{Math.round(region.confidence * 100)}%</b>
+          </span>
+        ))}
+      </div>
+      <div className="tamper-evidence-grid">
+        <TamperScoreBreakdown scores={asset.score_breakdown} />
+        <div className="tamper-signal-list">
+          <strong>Patch 异常信号</strong>
+          {topPatchSignals.length ? topPatchSignals.map((signal) => (
+            <span key={signal.region_id}>
+              <b>{tamperPatchSignalLabel(signal.signal_type)}</b>
+              <em>{Math.round(signal.score * 100)}%</em>
+              <small>{signal.explanation}</small>
+            </span>
+          )) : <span><b>暂无高分 patch</b><em>0%</em><small>当前主要依赖凭证上下文和候选字段区域。</small></span>}
+        </div>
+      </div>
+      <div className="tamper-audit-strip">
+        {asset.analysis_layers.map((item) => <span key={item}>{tamperLayerLabel(item)}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function TamperScoreBreakdown({ scores }: { scores: Record<string, number> }) {
+  const rows = [
+    ["document_prior", "材料上下文"],
+    ["file_container", "文件统计"],
+    ["patch_signal", "Patch 信号"],
+    ["region_confidence", "区域置信"],
+  ].map(([key, label]) => ({
+    key,
+    label,
+    value: Math.max(0, Math.min(1, scores[key] ?? 0)),
+  }));
+  return (
+    <div className="tamper-score-list">
+      <strong>分数拆解</strong>
+      {rows.map((row) => (
+        <span key={row.key}>
+          <b>{row.label}</b>
+          <i><em style={{ width: `${row.value * 100}%` }} /></i>
+          <small>{Math.round(row.value * 100)}%</small>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TamperSuggestions({ result }: { result: TamperForensicsResult | null }) {
+  const asset = result?.asset_results[0];
+  if (!asset) {
+    return (
+      <EmptyFormalState
+        title="复核建议待生成"
+        body="完成篡改分析后，这里会列出可见线索、后台核验方向和结论边界。"
+      />
+    );
+  }
+  const boundary = stringValue(result.aggregate.boundary) || "图像篡改分析为辅助线索，需结合原始文件、业务后台和人工复核。";
+  return (
+    <div className="disposal-grid">
+      <ActionList accent="green" title="可见线索" items={asset.visible_cues} />
+      <ActionList accent="blue" title="人工复核建议" items={asset.review_suggestions.length ? asset.review_suggestions : result.recommended_next_steps} />
+      <ActionList accent="amber" title="辅助研判边界" items={[boundary, ...asset.limitations.slice(0, 2)]} />
+      <ActionList accent="red" title="审计轨迹" items={asset.audit_trace.length ? asset.audit_trace : asset.suspected_regions.map((item) => `${item.label}：${item.visible_cues[0] ?? tamperCueLabel(item.cue_type)}`)} />
+    </div>
+  );
+}
+
 function ImageForensicsPanel({ result }: { result: ImageForensicsResult | null }) {
   if (!result || !result.asset_results.length) {
     return (
@@ -720,11 +1140,15 @@ function EmptyFormalState({ body, title }: { body: string; title: string }) {
   );
 }
 
-function AssetSnapshotStrip({ bundle }: { bundle: CaseEvidenceBundle | null }) {
+function AssetSnapshotStrip({ bundle, task }: { bundle: CaseEvidenceBundle | null; task: "generation" | "tamper" }) {
   const assets = bundle?.assets ?? [];
   const snapshots = bundle?.snapshots ?? [];
   if (!assets.length && !snapshots.length) {
-    return <div className="empty-evidence">尚未固定证据材料。请先固定图像证据并保存公开来源快照。</div>;
+    const text =
+      task === "tamper"
+        ? "篡改取证素材待同步。请上传单据/凭证/材料图片后再分析。"
+        : "生成检测素材待同步。请上传待检图片或保存来源快照后再分析。";
+    return <div className="empty-evidence">{text}</div>;
   }
   return (
     <div className="asset-strip">
@@ -1045,6 +1469,58 @@ function scoreToLevel(score: number): RiskLevel {
     return "关注";
   }
   return "低";
+}
+
+function tamperRiskLabel(value: string): string {
+  const labels: Record<string, string> = {
+    low: "低",
+    medium: "中",
+    high: "高",
+  };
+  return labels[value] ?? "待核验";
+}
+
+function tamperCueLabel(value: string): string {
+  const labels: Record<string, string> = {
+    text_overlay: "文字覆盖",
+    amount_date_mismatch: "金额/日期不一致",
+    splice: "局部拼接",
+    inpaint: "擦除修补",
+    copy_move: "复制移动",
+    compression_mismatch: "压缩不一致",
+    unknown: "未知疑点",
+  };
+  return labels[value] ?? (value ? value : "待分析");
+}
+
+function tamperSignalSourceLabel(value: string): string {
+  const labels: Record<string, string> = {
+    document_context_prior: "材料先验",
+    patch_luma_texture_edge_scan: "Patch扫描",
+  };
+  return labels[value] ?? value;
+}
+
+function tamperPatchSignalLabel(value: string): string {
+  const labels: Record<string, string> = {
+    edge_sharpness_mismatch: "边缘锐度异常",
+    edge_smoothing_mismatch: "边缘平滑异常",
+    local_noise_residual: "局部噪声残差",
+    texture_smoothing_mismatch: "纹理平滑异常",
+    local_luma_mismatch: "局部亮度异常",
+  };
+  return labels[value] ?? value;
+}
+
+function tamperLayerLabel(value: string): string {
+  const labels: Record<string, string> = {
+    document_context_prior: "材料上下文先验",
+    file_container_statistics: "文件容器统计",
+    patch_luma_texture_edge_scan: "Patch 亮度/纹理/边缘扫描",
+    candidate_region_ranking: "候选区域排序",
+    human_review_boundary: "人工复核边界",
+  };
+  return labels[value] ?? value;
 }
 
 function sourceLabel(value: string): string {

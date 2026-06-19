@@ -23,6 +23,7 @@ import type {
   ModelInvocationRequest,
   ModelInvocationResult,
   RealCaseAnalysisResult,
+  TamperForensicsResult,
   TrainingRunRequest,
   TrainingRunResult,
   TrainingStatus,
@@ -180,6 +181,29 @@ export async function fetchImageForensics(caseId: string): Promise<ImageForensic
     throw new Error(await errorMessage(response, "无法加载已保存的图像来源研判结果"));
   }
   return response.json() as Promise<ImageForensicsResult>;
+}
+
+export async function runTamperForensics(caseId: string): Promise<TamperForensicsResult> {
+  const response = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/tamper-forensics`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "图像篡改取证失败"));
+  }
+  return response.json() as Promise<TamperForensicsResult>;
+}
+
+export async function fetchTamperForensics(caseId: string): Promise<TamperForensicsResult | null> {
+  const response = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/tamper-forensics?_=${Date.now()}`, {
+    cache: "no-store",
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(await errorMessage(response, "无法加载已保存的图像篡改取证结果"));
+  }
+  return response.json() as Promise<TamperForensicsResult>;
 }
 
 export async function runTraining(
