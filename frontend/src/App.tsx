@@ -103,6 +103,24 @@ const GENERATION_POOL_STATS = [
   { label: "真实照片", value: "1,152" },
 ];
 
+const GENERATION_ACTIVE_MODEL = {
+  id: "e6d8a103-1f29-4512-8057-e345abf60e6f",
+  updatedFrom: "platform_transcode_eval_generator_three_way_latest.json",
+  metrics: [
+    { label: "原图", acc: "90.8%", macroF1: "91.3%", gptRecall: "100%", realFpr: "0%" },
+    { label: "微博下载", acc: "97.5%", macroF1: "97.5%", gptRecall: "100%", realFpr: "0%" },
+    { label: "小红书下载", acc: "93.3%", macroF1: "94.3%", gptRecall: "100%", realFpr: "0%" },
+    {
+      label: "微博截图",
+      acc: "84.2%",
+      macroF1: "85.1%",
+      gptRecall: "72.5%",
+      realFpr: "12.5%",
+      note: "截图链路可用但需复核",
+    },
+  ],
+};
+
 export function App() {
   const [activeTask, setActiveTask] = useState<WorkbenchTask>("generation");
   const [cases, setCases] = useState<CaseSample[]>([]);
@@ -688,6 +706,7 @@ export function App() {
               </section>
 
               <PoolStatsStrip stats={GENERATION_POOL_STATS} />
+              <GenerationModelPerformance />
 
               <section className="module module-span-2 real-workflow">
                 <ModuleTitle
@@ -953,6 +972,29 @@ function PoolStatsStrip({ stats }: { stats: Array<{ label: string; value: string
       {stats.map((item) => (
         <SmallStat key={item.label} label={item.label} value={item.value} />
       ))}
+    </section>
+  );
+}
+
+function GenerationModelPerformance() {
+  return (
+    <section className="model-performance-strip module-span-2" aria-label="三分类生成检测模型表现">
+      <div className="model-performance-head">
+        <span>当前模型</span>
+        <strong>三分类生成图研判</strong>
+        <em>{GENERATION_ACTIVE_MODEL.id.slice(0, 8)}</em>
+      </div>
+      <div className="model-performance-grid">
+        {GENERATION_ACTIVE_MODEL.metrics.map((item) => (
+          <div className={item.note ? "performance-card caution" : "performance-card"} key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.acc}</strong>
+            <b>Macro-F1 {item.macroF1}</b>
+            <em>GPT召回 {item.gptRecall} · 真实误报 {item.realFpr}</em>
+            {item.note ? <i>{item.note}</i> : null}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
