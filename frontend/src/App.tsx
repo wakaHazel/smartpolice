@@ -1005,10 +1005,10 @@ function tamperDatasetStats(status: TrainingDataStatus | null): Array<{ label: s
   const sourceCount = status?.sources.length ?? 0;
   const externalImages = task?.image_available_count ?? status?.external_sample_count ?? 0;
   return [
-    { label: "篡改HF/外部图", value: String(externalImages) },
-    { label: "数据源", value: String(sourceCount) },
-    { label: "脱敏演示", value: "3" },
-    { label: "标签类型", value: String(Object.keys(labels).length || 0) },
+    { label: "篡改样本池", value: String(externalImages) },
+    { label: "专属数据源", value: String(sourceCount) },
+    { label: "演示三案", value: "3" },
+    { label: "疑点类型", value: String(Object.keys(labels).length || 0) },
   ];
 }
 
