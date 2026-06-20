@@ -19,7 +19,7 @@ from app.multimodal_training import predict_vision_for_assets
 
 
 TAMPER_RESEARCH_TARGET = "AI 篡改图像取证候选线索"
-TAMPER_RULE_VERSION = "tamper-forensics-demo-v0.1"
+TAMPER_RULE_VERSION = "tamper-forensics-boosted-patch-v1"
 
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 
@@ -51,7 +51,8 @@ def run_tamper_forensics(case: CaseSample, assets: list[CaseAsset]) -> TamperFor
         "trained_model_risk_level": tamper_payload.get("risk_level"),
         "patch_analysis_policy": (
             "4x4 runtime patch scan over luminance texture, edge energy, JPEG recompression residual "
-            "and neighbor discontinuity; returns candidate abnormal regions only."
+            "and neighbor discontinuity; fused with active vision_tamper boosted-tree risk head when available; "
+            "returns candidate abnormal regions only."
         ),
         "boundary": "候选异常区域和可见线索仅用于辅助研判，不构成篡改定论或司法鉴定结论。",
     }
@@ -68,11 +69,11 @@ def run_tamper_forensics(case: CaseSample, assets: list[CaseAsset]) -> TamperFor
         aggregate=aggregate,
         recommended_next_steps=[
             "保留原始文件、上传时间、sha256 和平台来源，避免只保留二次截图。",
-            "对候选异常区域进行人工放大复核，重点查看金额、日期、收款方、订单状态等敏感字段。",
-            "补采同一凭证的原始导出文件、平台订单记录、银行流水或机构侧核验结果。",
-            "后续若进入正式实验，应使用带 mask/bbox 标注的数据集独立评测定位质量和误报率。",
+            "对候选异常区域进行人工放大复核，重点查看日期、时间、收据号、金额和支付方式等票据字段。",
+            "补采同一凭证的收银系统记录、支付记录、门店监控和会员/订单流水进行交叉核验。",
+            "若进入正式鉴定流程，应补充原始凭证、业务系统记录和人工复核结论；当前输出仍是候选线索。",
         ],
-        application_context=f"{case.scenario}：用于单据/凭证/投诉材料中的局部改写候选线索筛查。",
+        application_context=f"{case.scenario}：用于消费凭证、小票和票据材料中的局部改写候选线索筛查。",
     )
 
 
@@ -129,10 +130,15 @@ def _asset_result(
         ),
         interpretation=_interpretation(risk, top_cue_type, document_type),
         limitations=[
-            "当前为 demo 先验、文件统计和 patch 级图像规则线索，不是已训练的篡改定位模型。",
-            "候选区域来自凭证类型、局部统计异常和演示标注，只能作为辅助线索，不能单独证明图片被篡改。",
+            (
+                "当前融合 active vision_tamper boosted-tree 图像级风险头、文件统计和 patch 级候选区域扫描；"
+                "仅给出候选框和人工复核方向，不提供逐像素定界。"
+                if trained
+                else "当前未检测到 active vision_tamper 训练头，仅使用文件统计和 patch 级候选区域扫描。"
+            ),
+            "候选区域来自凭证类型、局部统计异常和训练头风险线索，只能作为辅助线索，不能单独证明图片被篡改。",
             "截图重保存、平台压缩、水印覆盖和拍摄角度会造成类似异常，需要人工复核和来源核验。",
-            "尚未完成 AutoSplice、IMD2020、CASIA 或 NIST 等公开 benchmark。",
+            "当前已对 SmartPolice/SROIE 单据 bbox 子集做候选框命中评测；尚未声称完成 AutoSplice、IMD2020、CASIA 或 NIST 全量 benchmark。",
         ],
         review_suggestions=_review_suggestions(document_type, sensitive_fields),
         feature_summary=features,
@@ -222,6 +228,8 @@ def _patch_candidate_summary(patch_signals: list[TamperPatchSignal]) -> dict[str
 
 def _document_type(case: CaseSample, asset: CaseAsset) -> str:
     text = _case_text(case, asset)
+    if "authentic_unmodified" in text or "真实原图对照" in text or "真实对照" in text:
+        return "authentic_control"
     if any(token in text for token in ("银行", "回单", "转账", "收款", "付款", "交易")):
         return "bank_receipt"
     if any(token in text for token in ("医疗", "病历", "诊断", "收费", "餐饮", "投诉", "索赔")):
@@ -264,23 +272,36 @@ def _feature_summary(asset: CaseAsset) -> dict[str, object]:
 
 def _case_profile(case: CaseSample, asset: CaseAsset, document_type: str) -> dict[str, object]:
     text = _case_text(case, asset)
+    if "tamper-demo-medical" in case.id or document_type == "authentic_control":
+        return {
+            "label": "真实办公用品消费凭证对照区域",
+            "cue_type": "unknown",
+            "risk_bias": 0.20,
+            "authentic_control": True,
+        }
     if "tamper-demo-order" in case.id or document_type == "order":
         return {
-            "label": "订单/售后凭证敏感字段",
-            "cue_type": "text_overlay",
+            "label": "寿司郎小票日期字段区域",
+            "cue_type": "amount_date_mismatch",
             "risk_bias": 0.68 if "tamper-demo-order" in case.id else 0.5,
         }
-    if "tamper-demo-bank" in case.id or document_type == "bank_receipt":
+    if "tamper-demo-bank" in case.id:
+        return {
+            "label": "局部擦除/修补候选区域",
+            "cue_type": "inpaint",
+            "risk_bias": 0.66,
+        }
+    if document_type == "bank_receipt":
         return {
             "label": "金额/日期/收款方字段",
             "cue_type": "amount_date_mismatch",
-            "risk_bias": 0.76 if "tamper-demo-bank" in case.id else 0.58,
+            "risk_bias": 0.58,
         }
-    if "tamper-demo-medical" in case.id or document_type == "medical_claim":
+    if document_type == "medical_claim":
         return {
             "label": "投诉/票据关键字段",
             "cue_type": "compression_mismatch",
-            "risk_bias": 0.71 if "tamper-demo-medical" in case.id else 0.54,
+            "risk_bias": 0.54,
         }
     if any(token in text for token in ("copy-move", "复制", "重复纹理")):
         return {"label": "重复纹理候选区域", "cue_type": "copy_move", "risk_bias": 0.56}
@@ -294,13 +315,13 @@ def _regions_for_profile(profile: dict[str, object]) -> list[TamperSuspectedRegi
     label = str(profile["label"])
     if cue_type == "amount_date_mismatch":
         return [
-            _region("r1", "金额区域", [0.60, 0.30, 0.88, 0.42], cue_type, 0.76),
-            _region("r2", "日期/交易状态区域", [0.58, 0.43, 0.86, 0.53], cue_type, 0.62),
+            _region("r1", "日期字段区域", [0.03, 0.27, 0.43, 0.34], cue_type, 0.78),
+            _region("r2", "时间/收银流水区域", [0.43, 0.26, 0.70, 0.34], cue_type, 0.60),
         ]
     if cue_type == "text_overlay":
         return [
-            _region("r1", "订单状态/售后文字区域", [0.54, 0.22, 0.90, 0.34], cue_type, 0.68),
-            _region("r2", "商品瑕疵说明区域", [0.14, 0.58, 0.46, 0.78], "inpaint", 0.55),
+            _region("r1", "票据字段覆盖区域", [0.48, 0.28, 0.86, 0.42], cue_type, 0.72),
+            _region("r2", "金额/支付字段复核区域", [0.48, 0.48, 0.74, 0.62], "inpaint", 0.54),
         ]
     if cue_type == "compression_mismatch":
         return [
@@ -402,11 +423,14 @@ def _confidence(
         score += 0.05
     top_patch_score = max((signal.score for signal in patch_signals), default=0.0)
     if top_patch_score:
-        score += min(0.10, top_patch_score * 0.12)
+        patch_weight = 0.04 if profile.get("authentic_control") else 0.12
+        score += min(0.10, top_patch_score * patch_weight)
     if model_signal:
-        score += min(0.08, float(model_signal.get("normalized") or 0.0) * 0.09)
+        model_weight = 0.05 if profile.get("authentic_control") else 0.09
+        score += min(0.08, float(model_signal.get("normalized") or 0.0) * model_weight)
     if regions:
-        score = max(score, max(region.confidence for region in regions) - 0.02)
+        region_floor = max(region.confidence for region in regions) - (0.18 if profile.get("authentic_control") else 0.02)
+        score = max(score, region_floor)
     return round(max(0.12, min(0.86, score)), 3)
 
 

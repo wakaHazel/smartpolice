@@ -109,17 +109,18 @@ DEMO_CASES: list[CaseSample] = [
 TAMPER_DEMO_CASES: list[CaseSample] = [
     CaseSample(
         id="tamper-demo-order-after-sale-001",
-        title="AI 篡改订单/售后凭证研判",
-        scenario="单据/售后凭证字段局部改写候选线索",
-        platform="HF SROIE 单据篡改训练池样本",
-        publish_time="2026-06-18 09:00",
-        source_url="HF document-tamper pool: rth/sroie-2019-v2 / SROIE receipt source",
+        title="寿司郎消费小票日期改写不在场证明核查",
+        scenario="嫌疑人不在场证明消费凭证日期疑似改写",
+        platform="用户提供脱敏演示样本",
+        publish_time="2026-06-20 15:39",
+        source_url="本地演示样本：微信图片_20260621003512_937_88.png",
         content=(
-            "演示样本来自公开 SROIE 收据原图，并在本地生成金额/日期/状态字段覆盖篡改变体，"
-            "用于展示订单或售后凭证类材料的局部改写候选线索。"
+            "嫌疑人提交一张寿司郎上海 LCM 置汇旭辉店消费小票，声称案发时正在店内就餐。"
+            "小票显示收据号、门店、人数、消费项目和合计金额，但日期字段疑似被局部修改，"
+            "需要围绕日期、时间、收银流水和支付记录进行复核。"
         ),
         image_description=(
-            "真实收据/凭证图像上的字段覆盖篡改变体，不使用生成式中文模板图。"
+            "寿司郎中文消费小票照片，重点复核 2026/06/20 日期字段及其周边纸面纹理。"
         ),
         spread=SpreadMetrics(
             views=1200,
@@ -128,23 +129,23 @@ TAMPER_DEMO_CASES: list[CaseSample] = [
             likes=60,
             velocity="演示样例，不代表真实传播",
         ),
-        manual_label="AI 篡改取证 demo：SROIE 单据源图字段覆盖篡改样本",
-        tags=["AI篡改取证", "SROIE", "单据凭证", "demo"],
-        sensitivity_notes="图片来自公开单据数据集的本地篡改变体，不包含真实个人身份信息；仅输出候选线索。",
+        manual_label="document_field_tampered",
+        tags=["AI篡改取证", "寿司郎", "消费小票", "日期改写", "不在场证明"],
+        sensitivity_notes="用户提供的脱敏演示图，用于展示消费凭证日期字段局部改写核查；仅输出候选异常区域和人工复核建议。",
     ),
     CaseSample(
         id="tamper-demo-bank-transfer-001",
-        title="AI 篡改银行回单/转账凭证研判",
-        scenario="转账凭证金额/日期/状态字段局部改写候选线索",
-        platform="HF SROIE 单据篡改训练池样本",
+        title="餐饮/零售消费凭证局部修补备用样例",
+        scenario="Tax Invoice 消费凭证局部修补核查",
+        platform="HF SROIE / receipt document tamper",
         publish_time="2026-06-18 09:05",
-        source_url="HF document-tamper pool: rth/sroie-2019-v2 / SROIE receipt source",
+        source_url="hf_tamper_document_forensics / receipt document tamper",
         content=(
-            "演示样本来自公开 SROIE 收据原图，并在本地生成金额、日期或交易状态字段覆盖篡改变体，"
-            "用于类比银行回单/转账凭证关键字段改写风险。"
+            "备用演示样本来自公开英文收据/Tax Invoice 数据池，用于复核消费凭证局部擦除、"
+            "修补或字段覆盖风险；前端核心演示以一张篡改样本和一张真实对照为主。"
         ),
         image_description=(
-            "真实收据/凭证图像上的字段覆盖篡改变体，不使用生成式中文模板图。"
+            "英文消费凭证风格图片，独立来自篡改线数据池，不关联生成检测线素材。"
         ),
         spread=SpreadMetrics(
             views=980,
@@ -153,23 +154,23 @@ TAMPER_DEMO_CASES: list[CaseSample] = [
             likes=35,
             velocity="演示样例，不代表真实传播",
         ),
-        manual_label="AI 篡改取证 demo：SROIE 单据源图字段覆盖篡改样本",
-        tags=["AI篡改取证", "SROIE", "转账凭证", "demo"],
-        sensitivity_notes="图片来自公开单据数据集的本地篡改变体，不包含真实个人身份信息；仅输出候选线索。",
+        manual_label="document_field_tampered",
+        tags=["AI篡改取证", "SROIE", "Tax Invoice", "备用样例"],
+        sensitivity_notes="图片来自篡改线 receipt/document tamper 数据池，不包含真实个人身份信息；仅输出候选异常区域和人工复核建议。",
     ),
     CaseSample(
         id="tamper-demo-medical-complaint-001",
-        title="AI 篡改医疗/餐饮投诉材料研判",
-        scenario="投诉材料票据字段局部改写候选线索",
-        platform="HF SROIE 单据篡改训练池样本",
+        title="办公用品消费凭证真实原图对照",
+        scenario="Tax Invoice 真实消费凭证低风险对照",
+        platform="HF SROIE / receipt authentic control",
         publish_time="2026-06-18 09:10",
-        source_url="HF document-tamper pool: rth/sroie-2019-v2 / SROIE receipt source",
+        source_url="hf_tamper_document_forensics: doc_authentic_sroie_rth_source_0417_84bd60da3911.jpg",
         content=(
-            "演示样本来自公开 SROIE 收据原图，并在本地生成金额、日期或状态字段覆盖篡改变体，"
-            "用于类比医疗收费、餐饮消费和投诉材料附件中的局部改写风险。"
+            "英文办公用品/文具商店 Tax Invoice 真实原图对照，包含 invoice no、date、"
+            "商品、amount、GST、payment 等字段；用于低风险材料复核演示。"
         ),
         image_description=(
-            "真实收据/凭证图像上的字段覆盖篡改变体，不使用生成式中文模板图。"
+            "K STATIONERY & OFFICE SUPPLIES 办公用品消费凭证真实原图，无 manifest bbox。"
         ),
         spread=SpreadMetrics(
             views=1500,
@@ -178,9 +179,9 @@ TAMPER_DEMO_CASES: list[CaseSample] = [
             likes=72,
             velocity="演示样例，不代表真实传播",
         ),
-        manual_label="AI 篡改取证 demo：SROIE 单据源图字段覆盖篡改样本",
-        tags=["AI篡改取证", "SROIE", "投诉材料", "demo"],
-        sensitivity_notes="图片来自公开单据数据集的本地篡改变体，不包含真实个人身份信息；仅输出候选线索。",
+        manual_label="authentic_unmodified",
+        tags=["AI篡改取证", "SROIE", "Tax Invoice", "真实对照"],
+        sensitivity_notes="图片来自篡改线 hf_tamper_document_forensics 数据池真实原图对照，不包含真实个人身份信息；仅输出辅助研判和人工复核建议。",
     ),
 ]
 

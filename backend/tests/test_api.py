@@ -2768,7 +2768,7 @@ def test_tamper_forensics_cache_is_cleared_after_new_upload() -> None:
     body = run_response.json()
     assert body["research_target"] == "AI 篡改图像取证候选线索"
     assert body["trained"] is False
-    assert body["model_or_rule_version"] == "tamper-forensics-demo-v0.1"
+    assert body["model_or_rule_version"] == "tamper-forensics-boosted-patch-v1"
     assert body["aggregate"]["max_tamper_risk"] == "high"
     assert body["asset_results"][0]["top_cue_type"] == "amount_date_mismatch"
     assert body["asset_results"][0]["suspected_regions"]
@@ -2962,8 +2962,16 @@ def test_tamper_forensics_includes_trained_vision_tamper_signal(tmp_path: Path) 
     assert train_body["status"] == "active_trained"
     assert train_body["model_kind"] == "local-vision-tamper-boosted-patch-v1"
     tree_regressor = train_body["model_card"]["tree_regressor"]
-    assert tree_regressor["model"] in {"XGBoostRegressor", "CatBoostRegressor"}
+    assert tree_regressor["model"] in {
+        "XGBoostClassifier",
+        "CatBoostClassifier",
+        "XGBoostRegressor",
+        "CatBoostRegressor",
+    }
     assert tree_regressor["model_family"] == "boosted_tree"
+    if tree_regressor["model"].endswith("Classifier"):
+        assert tree_regressor["score_mapping"] == "tampered_probability_to_0_100"
+        assert tree_regressor["positive_label"] == "tampered"
     assert train_body["model_card"]["tamper_forensics_policy"]["enabled"] is True
     assert "candidate abnormal regions" in train_body["model_card"]["tamper_forensics_policy"]["region_policy"]
 

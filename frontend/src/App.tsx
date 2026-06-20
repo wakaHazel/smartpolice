@@ -90,7 +90,6 @@ const VISIBLE_DEMO_CASE_IDS = new Set([
 
 const TAMPER_DEMO_CASE_IDS = new Set([
   "tamper-demo-order-after-sale-001",
-  "tamper-demo-bank-transfer-001",
   "tamper-demo-medical-complaint-001",
 ]);
 
@@ -1007,7 +1006,7 @@ function tamperDatasetStats(status: TrainingDataStatus | null): Array<{ label: s
   return [
     { label: "篡改样本池", value: String(externalImages) },
     { label: "专属数据源", value: String(sourceCount) },
-    { label: "演示三案", value: "3" },
+    { label: "对照样例", value: "2" },
     { label: "疑点类型", value: String(Object.keys(labels).length || 0) },
   ];
 }

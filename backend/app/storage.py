@@ -2004,13 +2004,14 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
             str(Path(__file__).resolve().parents[1] / "data"),
         )
     )
+    bundled_source_root = Path(__file__).resolve().parent / "demo_assets" / "tamper"
     source_root = data_root / "tamper_demo_sources"
     specs = {
         "tamper-demo-order-after-sale-001": {
             "asset_id": "asset-tamper-demo-order",
-            "filename": "tamper-demo-order-after-sale.jpg",
-            "source_stem": "tamper-demo-order-after-sale",
-            "legacy_filenames": ["tamper-demo-order-after-sale.png", "tamper-demo-disaster-material.jpg"],
+            "filename": "tamper-demo-order-after-sale.png",
+            "source_path": bundled_source_root / "tamper-demo-order-after-sale.png",
+            "legacy_filenames": ["tamper-demo-order-after-sale.jpg", "tamper-demo-disaster-material.jpg"],
         },
         "tamper-demo-bank-transfer-001": {
             "asset_id": "asset-tamper-demo-bank",
@@ -2021,7 +2022,7 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
         "tamper-demo-medical-complaint-001": {
             "asset_id": "asset-tamper-demo-medical",
             "filename": "tamper-demo-medical-complaint.jpg",
-            "source_stem": "tamper-demo-medical-complaint",
+            "source_path": bundled_source_root / "tamper-demo-medical-complaint.jpg",
             "legacy_filenames": ["tamper-demo-medical-complaint.png", "tamper-demo-public-order-screenshot.png"],
         },
     }
@@ -2045,7 +2046,7 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
             legacy_path = case_dir / str(legacy_name)
             if legacy_path.exists() and legacy_path.is_file():
                 legacy_path.unlink()
-        source_path = _tamper_demo_source_path(source_root, str(spec["source_stem"]))
+        source_path = Path(str(spec["source_path"])) if spec.get("source_path") else _tamper_demo_source_path(source_root, str(spec["source_stem"]))
         if source_path is None:
             connection.execute(
                 "DELETE FROM case_assets WHERE id = ? OR case_id = ?",
