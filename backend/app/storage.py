@@ -2153,11 +2153,8 @@ def _seed_generation_demo_assets(connection: sqlite3.Connection) -> None:
             "asset_id": "asset-demo-gptimage-station-conflict",
             "filename": "gptimage-station-police-conflict-original.jpg",
         },
-        "demo-real-beijing-road-street-001": {
-            "asset_id": "asset-demo-real-sichuan-earthquake-rescue",
-            "filename": "real-sichuan-earthquake-rescue.jpg",
-        },
     }
+    _remove_generation_demo_seeded_real_asset(connection, data_root)
     cases_by_id = {case.id: case for case in DEMO_CASES}
     for case_id, spec in specs.items():
         deleted = connection.execute(
@@ -2187,6 +2184,13 @@ def _seed_generation_demo_assets(connection: sqlite3.Connection) -> None:
             continue
         case_dir = data_root / "uploads" / case_id
         case_dir.mkdir(parents=True, exist_ok=True)
+        _remove_extra_generation_demo_assets(
+            connection,
+            case_id=case_id,
+            keep_asset_id=str(spec["asset_id"]),
+            keep_filename=str(spec["filename"]),
+            case_dir=case_dir,
+        )
         image_path = case_dir / str(spec["filename"])
         try:
             source_raw = source_path.read_bytes()
@@ -2257,6 +2261,63 @@ def _seed_generation_demo_assets(connection: sqlite3.Connection) -> None:
             "DELETE FROM image_forensics_runs WHERE case_id = ?",
             (case_id,),
         )
+
+
+def _remove_generation_demo_seeded_real_asset(connection: sqlite3.Connection, data_root: Path) -> None:
+    case_id = "demo-real-beijing-road-street-001"
+    filename = "real-sichuan-earthquake-rescue.jpg"
+    connection.execute(
+        """
+        DELETE FROM case_assets
+        WHERE case_id = ?
+          AND (id = ? OR filename = ?)
+        """,
+        (case_id, "asset-demo-real-sichuan-earthquake-rescue", filename),
+    )
+    image_path = data_root / "uploads" / case_id / filename
+    if image_path.is_file():
+        try:
+            image_path.unlink()
+        except OSError:
+            pass
+    connection.execute(
+        "DELETE FROM image_forensics_runs WHERE case_id = ?",
+        (case_id,),
+    )
+
+
+def _remove_extra_generation_demo_assets(
+    connection: sqlite3.Connection,
+    *,
+    case_id: str,
+    keep_asset_id: str,
+    keep_filename: str,
+    case_dir: Path,
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT id, filename, storage_path
+        FROM case_assets
+        WHERE case_id = ?
+          AND (id != ? OR filename != ?)
+        """,
+        (case_id, keep_asset_id, keep_filename),
+    ).fetchall()
+    for _, filename, storage_path in rows:
+        for candidate in {case_dir / str(filename), Path(str(storage_path))}:
+            if candidate.is_file():
+                try:
+                    candidate.unlink()
+                except OSError:
+                    pass
+    connection.execute(
+        """
+        DELETE FROM case_assets
+        WHERE case_id = ?
+          AND (id != ? OR filename != ?)
+        """,
+        (case_id, keep_asset_id, keep_filename),
+    )
 
 
 def _tamper_demo_source_path(source_root: Path, stem: str) -> Path | None:
