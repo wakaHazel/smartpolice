@@ -139,7 +139,12 @@ REJECTED_DEMO_IDS = [
 def main() -> None:
     initialize_database()
     _remove_rejected_demo_cases()
-    _clear_case_evidence(REAL_DISASTER_RESCUE_CASE_ID)
+    for case_id in (
+        NANO_BANANA_COLLAPSE_CASE_ID,
+        GPT_STATION_CONFLICT_CASE_ID,
+        REAL_DISASTER_RESCUE_CASE_ID,
+    ):
+        _clear_case_evidence(case_id)
     for demo_case in DEMO_CASES:
         save_case_sample(demo_case)
     for case_id, image_path, filename, content_type in _copy_demo_images():
@@ -204,14 +209,14 @@ def _copy_demo_images() -> list[tuple[str, Path, str, str]]:
             DEMO_ASSET_DIR / "nano-banana-tunnel-collapse-social.png",
             "nano-banana-tunnel-collapse-social.png",
             "image/png",
-            False,
+            True,
         ),
         (
             GPT_STATION_CONFLICT_CASE_ID,
             DEMO_ASSET_DIR / "gptimage-station-police-conflict-original.jpg",
             "gptimage-station-police-conflict-original.jpg",
             "image/jpeg",
-            False,
+            True,
         ),
     ]
     copied: list[tuple[str, Path, str, str]] = []
@@ -237,8 +242,12 @@ def _copy_demo_images() -> list[tuple[str, Path, str, str]]:
 def _asset_for_image(path: Path, case_id: str, filename: str, content_type: str) -> CaseAsset:
     raw = path.read_bytes()
     width, height = Image.open(path).size
+    asset_ids = {
+        NANO_BANANA_COLLAPSE_CASE_ID: "asset-demo-nano-banana-collapse",
+        GPT_STATION_CONFLICT_CASE_ID: "asset-demo-gptimage-station-conflict",
+    }
     return CaseAsset(
-        id=f"asset-{case_id}-primary",
+        id=asset_ids.get(case_id, f"asset-{case_id}-primary"),
         case_id=case_id,
         filename=filename,
         content_type=content_type,
