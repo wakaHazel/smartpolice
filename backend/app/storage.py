@@ -392,6 +392,7 @@ def initialize_database() -> None:
                     for item in KNOWLEDGE_SEED
                 ],
             )
+        _seed_generation_demo_assets(connection)
         _seed_tamper_demo_assets(connection)
         _rebuild_knowledge_fts(connection)
         connection.commit()
@@ -2128,6 +2129,133 @@ def _seed_tamper_demo_assets(connection: sqlite3.Connection) -> None:
         connection.execute(
             "DELETE FROM tamper_forensics_runs WHERE case_id = ?",
             (case.id,),
+        )
+
+
+def _seed_generation_demo_assets(connection: sqlite3.Connection) -> None:
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    data_root = Path(
+        os.getenv(
+            "SMARTPOLICE_DATA_ROOT",
+            str(Path(__file__).resolve().parents[1] / "data"),
+        )
+    )
+    source_root = Path(__file__).resolve().parents[1] / "demo_assets"
+    specs = {
+        "demo-doubao-collapse-disaster-001": {
+            "asset_id": "asset-demo-nano-banana-collapse",
+            "filename": "nano-banana-tunnel-collapse-social.png",
+        },
+        "demo-gptimage-station-police-conflict-001": {
+            "asset_id": "asset-demo-gptimage-station-conflict",
+            "filename": "gptimage-station-police-conflict-original.jpg",
+        },
+        "demo-real-beijing-road-street-001": {
+            "asset_id": "asset-demo-real-sichuan-earthquake-rescue",
+            "filename": "real-sichuan-earthquake-rescue.jpg",
+        },
+    }
+    cases_by_id = {case.id: case for case in DEMO_CASES}
+    for case_id, spec in specs.items():
+        deleted = connection.execute(
+            "SELECT 1 FROM case_deletions WHERE id = ?",
+            (case_id,),
+        ).fetchone()
+        if deleted is not None:
+            continue
+        case = cases_by_id.get(case_id)
+        if case is not None:
+            connection.execute(
+                """
+                UPDATE case_samples
+                SET payload = ?
+                WHERE id = ?
+                """,
+                (case.model_dump_json(), case_id),
+            )
+        seeded_case = connection.execute(
+            "SELECT 1 FROM case_samples WHERE id = ?",
+            (case_id,),
+        ).fetchone()
+        if seeded_case is None:
+            continue
+        source_path = source_root / str(spec["filename"])
+        if not source_path.is_file():
+            continue
+        case_dir = data_root / "uploads" / case_id
+        case_dir.mkdir(parents=True, exist_ok=True)
+        image_path = case_dir / str(spec["filename"])
+        try:
+            source_raw = source_path.read_bytes()
+            source_digest = sha256(source_raw).hexdigest()
+            existing_asset = connection.execute(
+                """
+                SELECT sha256, storage_path
+                FROM case_assets
+                WHERE id = ? AND case_id = ?
+                """,
+                (spec["asset_id"], case_id),
+            ).fetchone()
+            if (
+                existing_asset is not None
+                and str(existing_asset[0]) == source_digest
+                and Path(str(existing_asset[1])).is_file()
+                and Path(str(existing_asset[1])).resolve() == image_path.resolve()
+            ):
+                continue
+            image_path.write_bytes(source_raw)
+            with Image.open(image_path) as image:
+                width, height = image.size
+                content_type = _content_type_for_path(image_path)
+        except OSError:
+            connection.execute(
+                "DELETE FROM case_assets WHERE id = ? OR case_id = ?",
+                (spec["asset_id"], case_id),
+            )
+            connection.execute(
+                "DELETE FROM image_forensics_runs WHERE case_id = ?",
+                (case_id,),
+            )
+            continue
+        created_at = datetime.now(UTC).isoformat()
+        relative_path = image_path.resolve().relative_to(data_root.resolve())
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO case_assets (
+                id,
+                case_id,
+                filename,
+                content_type,
+                size_bytes,
+                width,
+                height,
+                sha256,
+                storage_path,
+                preview_url,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                spec["asset_id"],
+                case_id,
+                spec["filename"],
+                content_type,
+                len(source_raw),
+                width,
+                height,
+                source_digest,
+                str(image_path),
+                f"/evidence/files/{str(relative_path).replace(chr(92), '/')}",
+                created_at,
+            ),
+        )
+        connection.execute(
+            "DELETE FROM image_forensics_runs WHERE case_id = ?",
+            (case_id,),
         )
 
 

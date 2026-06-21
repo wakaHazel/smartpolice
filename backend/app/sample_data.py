@@ -5,6 +5,92 @@ from app.models import CaseSample, SpreadMetrics
 
 DEMO_CASES: list[CaseSample] = [
     CaseSample(
+        id="demo-doubao-collapse-disaster-001",
+        title="Nano Banana生成虚假坍塌灾情图片研判",
+        scenario="灾害险情谣言",
+        platform="本地演示导入 / 短视频平台模拟传播",
+        publish_time="2026-06-14 20:10",
+        source_url="本地演示图片：backend/demo_assets/nano-banana-tunnel-collapse-social.png",
+        content=(
+            "演示样本为使用 Nano Banana 生成的虚假隧道施工坍塌抢险图片，模拟网传"
+            "“某地在建隧道突发塌方，救援车辆、消防人员和大型机械正在现场处置”的"
+            "公共安全线索。该图不对应真实灾情，用于演示社交平台压缩传播图片的来源研判。"
+        ),
+        image_description=(
+            "单张 PNG：画面为夜间隧道施工现场，含中文施工标识、救护车、警灯、"
+            "消防救援人员、挖掘机和吊装设备。"
+        ),
+        spread=SpreadMetrics(
+            views=268000,
+            reposts=7600,
+            comments=11200,
+            likes=18400,
+            velocity="演示设定：灾情关键词带动同城群和短视频评论区快速转发",
+        ),
+        manual_label="已知为 Nano Banana 生成的虚假灾情图片，用于演示图像来源研判",
+        manual_risk_score=88,
+        tags=["Nano Banana生成", "隧道塌方", "施工抢险", "社交平台压缩图"],
+        sensitivity_notes="坍塌、救援等灾情画面容易引发恐慌和集中求证；演示时需明确该图为生成样本。",
+        review_note="演示视频主案例：使用用户提供的原始清晰图，避免低清报道截图影响模型识别。",
+    ),
+    CaseSample(
+        id="demo-gptimage-station-police-conflict-001",
+        title="GPT-image生成车站警民执法冲突图片研判",
+        scenario="涉警公信力谣言",
+        platform="本地演示导入 / 社交群与短视频平台模拟传播",
+        publish_time="2026-06-14 21:05",
+        source_url="本地演示图片：backend/demo_assets/gptimage-station-police-conflict-original.jpg",
+        content=(
+            "演示样本为使用 GPT-image 生成的虚假中国车站警民执法冲突图片，模拟网传"
+            "“某车站民警与旅客发生激烈肢体冲突、现场大量群众围观拍摄”的涉警舆情线索。"
+            "该图不对应真实执法事件，用于演示高敏感涉警图片的来源研判和证据链报告生成。"
+        ),
+        image_description=(
+            "单张 JPEG：画面位于中国车站候车大厅，多名着警服人员与群众发生拉扯，"
+            "背景有中文宣传横幅、站台编号和电子显示屏。"
+        ),
+        spread=SpreadMetrics(
+            views=356000,
+            reposts=12800,
+            comments=19600,
+            likes=22100,
+            velocity="演示设定：涉警冲突关键词带动本地群聊和同城话题快速扩散",
+        ),
+        manual_label="已知为 GPT-image 生成的虚假涉警冲突图片，用于演示图像来源研判",
+        manual_risk_score=91,
+        tags=["GPT-image生成", "车站", "涉警冲突", "原始清晰图"],
+        sensitivity_notes="涉警执法冲突类画面容易损害公安机关公信力并激化线下围观，应优先固定原图和传播链。",
+        review_note="演示视频涉警高敏感案例：使用用户提供的 GPT-image 原始清晰图，展示报告生成链路。",
+    ),
+    CaseSample(
+        id="demo-real-beijing-road-street-001",
+        title="公开来源真实灾情救援照片核验",
+        scenario="灾害险情核查",
+        platform="Wikimedia Commons / 演示导入",
+        publish_time="2008-05-14",
+        source_url="https://commons.wikimedia.org/wiki/File:Sichuan_earthquake_save..JPG",
+        content=(
+            "演示样本为汶川地震后救援人员在受损建筑废墟中开展搜救的公开来源真实照片。"
+            "该图用于和 AI 生成灾情图片形成对照，核查重点是避免把真实灾情救援现场误判为生成图。"
+        ),
+        image_description=(
+            "单张 JPEG 实拍照片：救援人员在受损建筑和瓦砾现场转运伤员，画面具有真实灾害"
+            "救援场景、自然光照和现场杂乱细节。"
+        ),
+        spread=SpreadMetrics(
+            views=64200,
+            reposts=1480,
+            comments=620,
+            likes=3100,
+            velocity="演示设定：灾情图片被转发求证，需区分真实救援照片与AI编造灾情图",
+        ),
+        manual_label="公开来源真实灾情救援照片，用于演示真实照片核验",
+        manual_risk_score=32,
+        tags=["真实照片", "Wikimedia Commons", "汶川地震", "救援现场", "Public Domain"],
+        sensitivity_notes="真实灾情救援图片仍需核验来源、时间和地点，避免被拼接进新的本地灾情谣言叙事。",
+        review_note="真实照片对照案例：来源 Wikimedia Commons；文件 Sichuan earthquake save..JPG。",
+    ),
+    CaseSample(
         id="police-trust-001",
         title="AI合成执法冲突图文引发涉警公信力风险",
         scenario="涉警公信力谣言",
