@@ -57,28 +57,29 @@ def public_asset_path(path: str) -> str:
 
 
 async def save_uploaded_asset(case_id: str, file: UploadFile) -> CaseAsset:
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise EvidenceValidationError("只支持 PNG、JPEG、WebP 图片或截图。")
     raw = await file.read()
     if not raw:
         raise EvidenceValidationError("上传文件为空。")
     if len(raw) > MAX_IMAGE_BYTES:
         raise EvidenceValidationError("图片超过 10MB 上限。")
+    content_type = _normalize_image_content_type(raw, file.content_type, file.filename)
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise EvidenceValidationError("只支持 PNG、JPEG、WebP 图片或截图。")
 
     digest = sha256(raw).hexdigest()
-    extension = _extension_for_content_type(file.content_type)
+    extension = _extension_for_content_type(content_type)
     asset_id = f"asset-{uuid4().hex[:12]}"
     case_dir = UPLOAD_ROOT / case_id
     case_dir.mkdir(parents=True, exist_ok=True)
     stored_name = f"{asset_id}{extension}"
     storage_path = case_dir / stored_name
     storage_path.write_bytes(raw)
-    width, height = _image_size(raw, file.content_type)
+    width, height = _image_size(raw, content_type)
     asset = CaseAsset(
         id=asset_id,
         case_id=case_id,
         filename=file.filename or stored_name,
-        content_type=file.content_type,
+        content_type=content_type,
         size_bytes=len(raw),
         width=width,
         height=height,
@@ -235,6 +236,25 @@ def _extension_for_content_type(content_type: str) -> str:
         "image/jpeg": ".jpg",
         "image/webp": ".webp",
     }[content_type]
+
+
+def _normalize_image_content_type(raw: bytes, content_type: str | None, filename: str | None) -> str:
+    if content_type in ALLOWED_IMAGE_TYPES:
+        return content_type
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    suffix = Path(filename or "").suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".webp":
+        return "image/webp"
+    return content_type or ""
 
 
 def _image_size(raw: bytes, content_type: str) -> tuple[int | None, int | None]:
