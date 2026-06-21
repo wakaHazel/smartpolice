@@ -28,7 +28,7 @@ from app.evidence_service import (
     capture_url,
     save_uploaded_asset,
 )
-from app.image_forensics import run_image_forensics
+from app.image_forensics import needs_demo_forensics_refresh, run_image_forensics
 from app.llm_workflows import LlmOutputParseError, run_llm_report, run_llm_review
 from app.local_vision_training import (
     build_local_vision_jsonl,
@@ -333,8 +333,13 @@ def case_image_forensics(case_id: str) -> ImageForensicsResult:
 
 @app.get("/cases/{case_id}/image-forensics", response_model=ImageForensicsResult)
 def cached_case_image_forensics(case_id: str) -> ImageForensicsResult:
-    _case_or_404(case_id)
+    case = _case_or_404(case_id)
     result = load_image_forensics_result(case_id)
+    if needs_demo_forensics_refresh(case_id, result):
+        assets = list_case_assets(case_id)
+        if assets:
+            result = run_image_forensics(case, assets)
+            save_image_forensics_result(result)
     if result is None:
         raise HTTPException(status_code=404, detail="暂无已保存的图像来源研判结果。")
     return result

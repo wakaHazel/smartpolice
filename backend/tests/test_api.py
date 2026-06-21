@@ -3088,8 +3088,8 @@ def test_image_forensics_keeps_known_gpt_image_demo_first(monkeypatch: Any) -> N
 
     assert response.status_code == 200
     body = response.json()
-    assert body["asset_results"][0]["top_candidate"] == "real"
-    assert body["asset_results"][0]["candidate_ranking"][0]["label"] == "real"
+    assert body["asset_results"][0]["top_candidate"] == "gpt-image2"
+    assert body["asset_results"][0]["candidate_ranking"][0]["label"] == "gpt-image2"
 
 
 def test_image_forensics_keeps_known_nano_banana_demo_as_other_ai(monkeypatch: Any) -> None:
@@ -3158,10 +3158,10 @@ def test_image_forensics_keeps_known_nano_banana_demo_as_other_ai(monkeypatch: A
     assert response.status_code == 200
     body = response.json()
     asset_result = body["asset_results"][0]
-    assert asset_result["top_candidate"] == "gpt-image2"
-    assert asset_result["candidate_ranking"][0]["label"] == "gpt-image2"
-    assert asset_result["candidate_ranking"][0]["probability"] == 0.91
-    assert body["aggregate"]["candidate_ranking"][0]["label"] == "gpt-image2"
+    assert asset_result["top_candidate"] == "nano-banana"
+    assert asset_result["candidate_ranking"][0]["label"] == "other-generated"
+    assert asset_result["candidate_ranking"][0]["probability"] == 0.46
+    assert body["aggregate"]["candidate_ranking"][0]["label"] == "other-generated"
 
 
 def test_image_forensics_keeps_known_public_real_photo_as_real() -> None:

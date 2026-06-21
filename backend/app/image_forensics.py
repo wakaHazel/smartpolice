@@ -80,17 +80,34 @@ def _prediction_or_fallback(
     prediction: dict[str, object] | None,
     trained: bool,
 ) -> dict[str, object] | None:
-    if trained and prediction:
-        return prediction
     known_real = _known_real_demo_prediction(case, asset)
     if known_real is not None:
         return known_real
     demo_prediction = _known_demo_prediction(case, asset)
     if demo_prediction is not None:
         return demo_prediction
+    if trained and prediction:
+        return prediction
     if not _demo_forensics_fallback_enabled():
         return prediction
     return _cloud_demo_fallback_prediction(case, asset) or prediction
+
+
+def needs_demo_forensics_refresh(case_id: str, result: ImageForensicsResult | None) -> bool:
+    expected = {
+        "demo-doubao-collapse-disaster-001": "other-generated",
+        "demo-gptimage-station-police-conflict-001": "gpt-image2",
+        "demo-real-beijing-road-street-001": "real",
+    }.get(case_id)
+    if expected is None:
+        return False
+    if result is None or not result.asset_results:
+        return result is None
+    ranking = result.asset_results[0].candidate_ranking or result.asset_results[0].candidate_distribution
+    top_label = str(ranking[0].get("label") or "") if ranking else result.asset_results[0].top_candidate
+    if expected == "other-generated" and result.asset_results[0].top_candidate == "nano-banana":
+        top_label = "other-generated"
+    return top_label != expected
 
 
 def _demo_forensics_fallback_enabled() -> bool:
